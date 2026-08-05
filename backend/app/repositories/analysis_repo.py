@@ -1,0 +1,72 @@
+"""Persistence for change analysis results."""
+
+from __future__ import annotations
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.database.tables import AnalysisRow
+from app.models.analysis import ChangeAnalysisResult
+from app.models.enums import AnalysisTrigger, RiskLevel
+from app.models.graph import DependencyGraph
+from app.models.risk import RiskEvidence, RiskResult
+
+
+class AnalysisRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def save(self, result: ChangeAnalysisResult) -> ChangeAnalysisResult:
+        row = AnalysisRow(
+            id=result.id,
+            repository_id=result.repository_id,
+            trigger=result.trigger.value,
+            changed_files=result.changed_files,
+            impacted_modules=result.impacted_modules,
+            dependency_graph=result.dependency_graph.model_dump(),
+            risk_score=result.risk.score,
+            risk_level=result.risk.level.value,
+            risk_confidence=result.risk.confidence,
+            risk_evidence=[item.model_dump() for item in result.risk.evidence],
+            risk_reasons=result.risk.reasons,
+            ai_report=result.ai_report,
+        )
+        merged = await self._session.merge(row)
+        await self._session.commit()
+        await self._session.refresh(merged)
+        return self._to_schema(merged)
+
+    async def get(self, analysis_id: str) -> ChangeAnalysisResult | None:
+        row = await self._session.get(AnalysisRow, analysis_id)
+        return self._to_schema(row) if row else None
+
+    async def list_by_repository(
+        self, repository_id: str, *, limit: int = 50
+    ) -> list[ChangeAnalysisResult]:
+        stmt = (
+            select(AnalysisRow)
+            .where(AnalysisRow.repository_id == repository_id)
+            .order_by(AnalysisRow.created_at.desc())
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        return [self._to_schema(row) for row in result.scalars()]
+
+    @staticmethod
+    def _to_schema(row: AnalysisRow) -> ChangeAnalysisResult:
+        return ChangeAnalysisResult(
+            id=row.id,
+            repository_id=row.repository_id,
+            trigger=AnalysisTrigger(row.trigger),
+            changed_files=row.changed_files,
+            impacted_modules=row.impacted_modules,
+            dependency_graph=DependencyGraph(**row.dependency_graph),
+            risk=RiskResult(
+                score=row.risk_score,
+                level=RiskLevel(row.risk_level),
+                confidence=row.risk_confidence,
+                evidence=[RiskEvidence(**item) for item in row.risk_evidence],
+                reasons=row.risk_reasons,
+            ),
+            ai_report=row.ai_report,
+        )
