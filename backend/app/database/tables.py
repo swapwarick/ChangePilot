@@ -28,6 +28,8 @@ class RepositoryRow(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    owner: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    full_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     source: Mapped[str] = mapped_column(String(120), nullable=False)
     url: Mapped[str | None] = mapped_column(Text, nullable=True)
     default_branch: Mapped[str] = mapped_column(String(120), server_default="main")
@@ -44,6 +46,8 @@ class AnalysisRow(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     repository_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     trigger: Mapped[str] = mapped_column(String(40), nullable=False)
+    base_ref: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    head_ref: Mapped[str | None] = mapped_column(String(120), nullable=True)
     changed_files: Mapped[dict] = mapped_column(JSON, nullable=False, default=list)
     impacted_modules: Mapped[dict] = mapped_column(JSON, nullable=False, default=list)
     dependency_graph: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
@@ -53,7 +57,57 @@ class AnalysisRow(Base):
     risk_evidence: Mapped[dict] = mapped_column(JSON, nullable=False, default=list)
     risk_reasons: Mapped[dict] = mapped_column(JSON, nullable=False, default=list)
     ai_report: Mapped[str | None] = mapped_column(Text, nullable=True)
+    
+    # Audit & Versioning Metadata
+    parser_version: Mapped[str] = mapped_column(String(30), default="1.0.0")
+    graph_version: Mapped[str] = mapped_column(String(30), default="1.0.0")
+    risk_engine_version: Mapped[str] = mapped_column(String(30), default="1.0.0")
+    ai_prompt_version: Mapped[str] = mapped_column(String(30), default="1.0.0")
+    ai_provider: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    ai_model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, server_default=func.now())
+
+
+class AnalysisJobRow(Base):
+    __tablename__ = "analysis_jobs"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    repository_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="PENDING")  # PENDING, CLONING, PARSING, BUILDING_GRAPH, SCORING, COMPLETED, FAILED
+    step: Mapped[str] = mapped_column(String(60), nullable=False, default="Queued")
+    progress: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    analysis_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, server_default=func.now()
+    )
+
+
+class RepoKnowledgeGraphRow(Base):
+    __tablename__ = "repo_knowledge_graphs"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    repository_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    commit_sha: Mapped[str] = mapped_column(String(64), nullable=False)
+    graph_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    nodes: Mapped[dict] = mapped_column(JSON, nullable=False, default=list)
+    edges: Mapped[dict] = mapped_column(JSON, nullable=False, default=list)
+    health_metrics: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, server_default=func.now())
+
+
+class FileASTCacheRow(Base):
+    __tablename__ = "file_ast_cache"
+
+    file_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    file_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    language: Mapped[str] = mapped_column(String(40), nullable=False)
+    parsed_ast: Mapped[dict] = mapped_column(JSON, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, server_default=func.now()
+    )
 
 
 class AIProviderConfigRow(Base):

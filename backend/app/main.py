@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import ai_providers, analysis, health, repositories
+from app.api.routes import ai_providers, analysis, github, health, jobs, repositories
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 
@@ -26,8 +26,9 @@ def create_app() -> FastAPI:
     app.include_router(repositories.router, prefix="/repositories", tags=["repositories"])
     app.include_router(analysis.router, prefix="/analysis", tags=["analysis"])
     app.include_router(ai_providers.router, prefix="/ai-providers", tags=["ai providers"])
+    app.include_router(github.router, prefix="/github", tags=["github"])
+    app.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
     return app
 
 
 app = create_app()
-

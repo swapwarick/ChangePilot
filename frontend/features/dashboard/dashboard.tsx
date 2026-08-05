@@ -1,3 +1,6 @@
+"use client";
+
+import { useState, useEffect } from "react";
 import {
   Activity,
   Bell,
@@ -13,14 +16,22 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
-  Sun
+  Sun,
+  Github,
+  AlertTriangle,
+  FileCode,
+  Layers
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { analyses, providers } from "./data";
 import { DependencyGraph } from "./dependency-graph";
+import { RepoAnalyzerModal } from "@/features/github/repo-analyzer-modal";
+import { JobProgressBanner } from "@/features/analysis/job-progress-banner";
+import { AIProviderConfig, ChangeAnalysisResult, RepoKnowledgeGraph } from "@/types/api";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
 const navItems = [
   { label: "Dashboard", icon: LayoutDashboard, active: true },
@@ -40,7 +51,7 @@ function levelVariant(level: string) {
   return "success";
 }
 
-function Donut({ score = 0.72 }: { score?: number }) {
+function Donut({ score = 0 }: { score?: number }) {
   const degrees = Math.round(score * 360);
   return (
     <div
@@ -60,6 +71,69 @@ function Donut({ score = 0.72 }: { score?: number }) {
 }
 
 export function Dashboard() {
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [activeRepoId, setActiveRepoId] = useState<string | null>(null);
+  const [repositories, setRepositories] = useState<any[]>([]);
+  const [providers, setProviders] = useState<AIProviderConfig[]>([]);
+  const [analyses, setAnalyses] = useState<ChangeAnalysisResult[]>([]);
+  const [knowledgeGraph, setKnowledgeGraph] = useState<RepoKnowledgeGraph | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const fetchDashboardData = async () => {
+    setLoading(true);
+    try {
+      // Fetch repositories from DB
+      const repoRes = await fetch(`${API_BASE}/repositories`);
+      if (repoRes.ok) {
+        const repoData = await repoRes.json();
+        setRepositories(repoData);
+        if (repoData.length > 0 && !activeRepoId) {
+          setActiveRepoId(repoData[0].id);
+        }
+      }
+
+      // Fetch AI Providers
+      const provRes = await fetch(`${API_BASE}/ai-providers`);
+      if (provRes.ok) {
+        setProviders(await provRes.json());
+      }
+    } catch (err) {
+      console.error("Dashboard fetch error:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchRepoData = async (repoId: string) => {
+    try {
+      // Fetch analyses for active repo
+      const anlRes = await fetch(`${API_BASE}/analysis?repository_id=${repoId}`);
+      if (anlRes.ok) {
+        setAnalyses(await anlRes.json());
+      }
+
+      // Fetch persistent Knowledge Graph & Health
+      const kgRes = await fetch(`${API_BASE}/jobs/repositories/${repoId}/knowledge-graph`);
+      if (kgRes.ok) {
+        setKnowledgeGraph(await kgRes.json());
+      }
+    } catch (err) {}
+  };
+
+  useEffect(() => {
+    fetchDashboardData();
+  }, []);
+
+  useEffect(() => {
+    if (activeRepoId) {
+      fetchRepoData(activeRepoId);
+    }
+  }, [activeRepoId]);
+
+  const latestAnalysis = analyses.length > 0 ? analyses[0] : null;
+  const healthMetrics = knowledgeGraph?.health_metrics;
+
   return (
     <main className="flex min-h-screen flex-col text-sm lg:grid lg:grid-cols-[210px_1fr]">
       <aside className="hidden min-h-screen flex-col border-r border-border bg-surface/88 lg:flex">
@@ -87,20 +161,20 @@ export function Dashboard() {
           })}
         </nav>
         <div className="border-t border-border p-4">
-          <div className="text-xs uppercase text-muted-foreground">Project context</div>
-          <button className="mt-2 flex h-9 w-full items-center justify-between rounded-md border border-border bg-background px-3 text-left text-sm">
-            All repositories
-            <ChevronDown data-icon="inline-end" />
-          </button>
-          <div className="mt-6 flex items-center gap-3">
-            <div className="grid size-9 place-items-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
-              AS
-            </div>
-            <div>
-              <div className="font-medium">Alex Smith</div>
-              <div className="text-xs text-muted-foreground">Staff Engineer</div>
-            </div>
-          </div>
+          <div className="text-xs uppercase text-muted-foreground">Active Repository</div>
+          <select
+            value={activeRepoId || ""}
+            onChange={(e) => setActiveRepoId(e.target.value)}
+            className="mt-2 flex h-9 w-full items-center justify-between rounded-md border border-border bg-background px-3 text-left text-sm"
+          >
+            {repositories.length === 0 ? (
+              <option value="">No repositories connected</option>
+            ) : (
+              repositories.map((repo) => (
+                <option key={repo.id} value={repo.id}>{repo.name}</option>
+              ))
+            )}
+          </select>
         </div>
       </aside>
 
@@ -112,9 +186,9 @@ export function Dashboard() {
             <kbd className="ml-auto rounded-sm border border-border px-1.5 py-0.5 text-xs">⌘ K</kbd>
           </div>
           <div className="flex items-center justify-end gap-2">
-            <Button>
-              <Plus data-icon="inline-start" />
-              New analysis
+            <Button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2">
+              <Github className="size-4" />
+              Connect & Analyze Repo
             </Button>
             <Button aria-label="Notifications" size="icon" variant="ghost">
               <Bell />
@@ -129,19 +203,26 @@ export function Dashboard() {
         </header>
 
         <div className="p-5">
+          {activeJobId && (
+            <JobProgressBanner
+              jobId={activeJobId}
+              onJobComplete={(anlId) => {
+                if (activeRepoId) fetchRepoData(activeRepoId);
+              }}
+            />
+          )}
+
           <div className="mb-4 flex flex-col items-start justify-between gap-3 xl:flex-row">
             <div>
-              <h1 className="text-2xl font-semibold">Dashboard</h1>
+              <h1 className="text-2xl font-semibold">Repository Knowledge Graph</h1>
               <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                AI-explained change impact analysis across your software ecosystem.
+                Real code analysis, AST dependency graphing, deterministic risk scoring, and repo health metrics.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-              <RefreshCcw data-icon="inline-start" />
-              Updated 2m ago
-              <Button variant="outline">
-                Last 7 days
-                <ChevronDown data-icon="inline-end" />
+              <RefreshCcw className="size-4 cursor-pointer" onClick={fetchDashboardData} />
+              <Button variant="outline" size="sm" onClick={() => setIsModalOpen(true)}>
+                <Plus className="size-4 mr-1" /> New Analysis Job
               </Button>
             </div>
           </div>
@@ -150,39 +231,46 @@ export function Dashboard() {
             <Card className="xl:col-span-2">
               <CardHeader>
                 <div>
-                  <CardTitle>Repository risk overview</CardTitle>
-                  <CardDescription>128 repositories scored with deterministic evidence.</CardDescription>
+                  <CardTitle>Deterministic Risk & Repository Health</CardTitle>
+                  <CardDescription>
+                    {activeRepoId ? `Repository ${activeRepoId} persistent analysis` : "Connect a repository to analyze"}
+                  </CardDescription>
                 </div>
               </CardHeader>
               <CardContent>
                 <div className="grid gap-4 lg:grid-cols-[420px_repeat(4,1fr)]">
                   <div className="flex items-center gap-8">
-                    <Donut score={0.5} />
+                    <Donut score={latestAnalysis?.risk.score || 0} />
                     <div className="flex flex-col gap-3">
-                      {[
-                        ["Low risk", "64", "bg-primary"],
-                        ["Medium risk", "37", "bg-warning"],
-                        ["High risk", "19", "bg-orange-500"],
-                        ["Critical risk", "8", "bg-destructive"]
-                      ].map(([label, value, color]) => (
-                        <div className="flex items-center gap-3" key={label}>
-                          <span className={`size-2.5 rounded-full ${color}`} />
-                          <span className="min-w-28 text-muted-foreground">{label}</span>
-                          <span className="font-semibold">{value}</span>
-                        </div>
-                      ))}
+                      <div className="flex items-center gap-3">
+                        <span className="size-2.5 rounded-full bg-primary" />
+                        <span className="min-w-28 text-muted-foreground">Risk Level</span>
+                        <Badge variant={levelVariant(latestAnalysis?.risk.level || "low")}>
+                          {latestAnalysis?.risk.level?.toUpperCase() || "LOW"}
+                        </Badge>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="size-2.5 rounded-full bg-warning" />
+                        <span className="min-w-28 text-muted-foreground">Confidence</span>
+                        <span className="font-semibold">{((latestAnalysis?.risk.confidence || 0) * 100).toFixed(0)}%</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="size-2.5 rounded-full bg-orange-500" />
+                        <span className="min-w-28 text-muted-foreground">Impacted Files</span>
+                        <span className="font-semibold">{latestAnalysis?.changed_files.length || 0}</span>
+                      </div>
                     </div>
                   </div>
                   {[
-                    ["High & critical", "27", "21% of repos"],
-                    ["Analyses (7d)", "142", "+18%"],
-                    ["Mean risk score", "0.42", "-0.08"],
-                    ["Policy violations", "23", "+5"]
+                    ["Knowledge Graph Files", healthMetrics?.total_files || 0, "Parsed AST nodes"],
+                    ["Circular Dependencies", healthMetrics?.circular_dependencies.length || 0, "Cycle import loops"],
+                    ["Orphan Modules", healthMetrics?.orphan_modules.length || 0, "Unreferenced files"],
+                    ["Test Coverage Gaps", healthMetrics?.test_coverage_gaps.length || 0, "Missing unit tests"]
                   ].map(([label, value, detail]) => (
-                    <div className="rounded-md border border-border bg-background p-4" key={label}>
-                      <div className="text-xs text-muted-foreground">{label}</div>
-                      <div className="mt-4 text-2xl font-semibold">{value}</div>
-                      <div className="mt-1 text-xs text-muted-foreground">{detail}</div>
+                    <div className="rounded-md border border-border bg-background p-4" key={String(label)}>
+                      <div className="text-xs text-muted-foreground">{String(label)}</div>
+                      <div className="mt-4 text-2xl font-semibold">{String(value)}</div>
+                      <div className="mt-1 text-xs text-muted-foreground">{String(detail)}</div>
                       <div className="mt-5 h-8 rounded-sm bg-gradient-to-r from-primary/25 via-warning/20 to-destructive/20" />
                     </div>
                   ))}
@@ -192,49 +280,47 @@ export function Dashboard() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Recent analyses</CardTitle>
-                <Button size="sm" variant="outline">
-                  All repositories
-                  <ChevronDown data-icon="inline-end" />
-                </Button>
+                <CardTitle>Recent Repository Analyses</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="overflow-x-auto"><Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Analysis</TableHead>
-                      <TableHead>Repository</TableHead>
-                      <TableHead>Risk</TableHead>
-                      <TableHead>Top risk</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Time</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {analyses.map((analysis) => (
-                      <TableRow key={analysis.id}>
-                        <TableCell className="font-medium">{analysis.subject}</TableCell>
-                        <TableCell className="text-muted-foreground">{analysis.repository}</TableCell>
-                        <TableCell>
-                          <Badge variant={levelVariant(analysis.level)}>{analysis.score.toFixed(2)}</Badge>
-                        </TableCell>
-                        <TableCell>{analysis.topRisk}</TableCell>
-                        <TableCell>
-                          <Badge variant="success">Completed</Badge>
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">{analysis.createdAt}</TableCell>
+                {analyses.length === 0 ? (
+                  <div className="py-8 text-center text-xs text-muted-foreground">
+                    No analyses performed yet. Click <strong>Connect & Analyze Repo</strong> to analyze a repository.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto"><Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Commit SHA</TableHead>
+                        <TableHead>Risk Score</TableHead>
+                        <TableHead>Level</TableHead>
+                        <TableHead>Impacted Modules</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table></div>
+                    </TableHeader>
+                    <TableBody>
+                      {analyses.map((anl) => (
+                        <TableRow key={anl.id}>
+                          <TableCell className="font-mono text-xs font-medium">{anl.id}</TableCell>
+                          <TableCell className="font-semibold">{anl.risk.score.toFixed(2)}</TableCell>
+                          <TableCell>
+                            <Badge variant={levelVariant(anl.risk.level)}>{anl.risk.level}</Badge>
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {anl.impacted_modules.join(", ") || "Root"}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table></div>
+                )}
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader>
                 <div>
-                  <CardTitle>Dependency graph preview</CardTitle>
-                  <CardDescription>Impacted nodes from the latest high-risk pull request.</CardDescription>
+                  <CardTitle>Knowledge Graph Structure</CardTitle>
+                  <CardDescription>Visual AST graph parsed from Tree-Sitter & Neo4j engine.</CardDescription>
                 </div>
               </CardHeader>
               <CardContent>
@@ -242,76 +328,54 @@ export function Dashboard() {
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="xl:col-span-2">
               <CardHeader>
                 <div>
-                  <CardTitle>Deterministic risk breakdown</CardTitle>
-                  <CardDescription>Weighted signals calculated without AI input.</CardDescription>
+                  <CardTitle>AI Report & Evidence Breakdown</CardTitle>
+                  <CardDescription>Asynchronously generated AI summary grounded in real AST signals.</CardDescription>
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="grid gap-5 lg:grid-cols-[170px_1fr]">
-                  <Donut />
-                  <div className="flex flex-col gap-3">
-                    {[
-                      ["Data consistency", 0.28, "High"],
-                      ["External dependencies", 0.18, "High"],
-                      ["Performance", 0.12, "Medium"],
-                      ["Security", 0.08, "Medium"],
-                      ["Test coverage", 0.04, "Low"]
-                    ].map(([label, value, impact]) => (
-                      <div className="grid grid-cols-[1fr_80px_80px] items-center gap-3" key={label}>
-                        <span>{label}</span>
-                        <span className="text-muted-foreground">{Number(value).toFixed(2)}</span>
-                        <Badge variant={impact === "High" ? "warning" : impact === "Medium" ? "secondary" : "success"}>
-                          {impact}
-                        </Badge>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                {latestAnalysis ? (
+                  <div className="space-y-4">
+                    <div className="rounded-md border border-border bg-muted/20 p-4 text-xs whitespace-pre-wrap font-mono">
+                      {latestAnalysis.ai_report || "AI report is generating in background..."}
+                    </div>
 
-            <Card>
-              <CardHeader>
-                <div>
-                  <CardTitle>AI provider status</CardTitle>
-                  <CardDescription>Fallback-ready provider health for explanation tasks.</CardDescription>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="overflow-x-auto"><Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Provider</TableHead>
-                      <TableHead>Model</TableHead>
-                      <TableHead>Latency</TableHead>
-                      <TableHead>Success</TableHead>
-                      <TableHead>Tokens (7d)</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {providers.map((provider) => (
-                      <TableRow key={provider.id}>
-                        <TableCell className="font-medium">{provider.name}</TableCell>
-                        <TableCell className="text-muted-foreground">{provider.model}</TableCell>
-                        <TableCell>{provider.latencyMs} ms</TableCell>
-                        <TableCell>
-                          <Badge variant="success">{provider.successRate}%</Badge>
-                        </TableCell>
-                        <TableCell>{(provider.usageTokens7d / 1_000_000).toFixed(1)}M</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table></div>
+                    <div className="mt-4">
+                      <h4 className="text-sm font-semibold mb-2">Deterministic Evidence Rules Triggered</h4>
+                      <div className="space-y-2">
+                        {latestAnalysis.risk.evidence.map((ev, idx) => (
+                          <div key={idx} className="flex items-center justify-between rounded-md border border-border bg-background p-3 text-xs">
+                            <div>
+                              <span className="font-semibold text-primary">{ev.signal}</span>
+                              <p className="text-muted-foreground mt-0.5">{ev.description}</p>
+                            </div>
+                            <Badge variant="outline">Weight: {ev.weight}</Badge>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="py-8 text-center text-xs text-muted-foreground">
+                    Connect and run analysis to view AI reports and deterministic evidence breakdown.
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
         </div>
       </section>
+
+      <RepoAnalyzerModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onJobStarted={(jobId, repoId) => {
+          setActiveJobId(jobId);
+          setActiveRepoId(repoId);
+        }}
+      />
     </main>
   );
 }
-
-

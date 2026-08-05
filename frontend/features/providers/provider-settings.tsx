@@ -1,63 +1,122 @@
 "use client";
 
-import { startTransition, useDeferredValue, useState } from "react";
-import { Download, PlugZap, Plus, Search, Settings2, TestTube2, Upload } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Download, PlugZap, Plus, Search, Settings2, TestTube2, Upload, Check } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
-import { providers as seedProviders } from "@/features/dashboard/data";
+import { AIProviderConfig } from "@/types/api";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
 export function AIProviderSettings() {
-  const [providers, setProviders] = useState(seedProviders);
+  const [providers, setProviders] = useState<AIProviderConfig[]>([]);
   const [query, setQuery] = useState("");
-  const deferredQuery = useDeferredValue(query);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const fetchProviders = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/ai-providers`);
+      if (res.ok) {
+        setProviders(await res.json());
+      }
+    } catch (err) {
+      console.error("Fetch providers error:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchProviders();
+  }, []);
 
   const filteredProviders = providers.filter((provider) =>
-    `${provider.name} ${provider.kind} ${provider.model}`.toLowerCase().includes(deferredQuery.toLowerCase())
+    `${provider.name} ${provider.kind} ${provider.model}`.toLowerCase().includes(query.toLowerCase())
   );
 
-  function toggleProvider(providerId: string, enabled: boolean) {
-    startTransition(() => {
-      setProviders((current) =>
-        current.map((provider) => (provider.id === providerId ? { ...provider, enabled } : provider))
-      );
-    });
-  }
+  const toggleProvider = async (provider: AIProviderConfig, enabled: boolean) => {
+    const updated = { ...provider, enabled };
+    try {
+      const res = await fetch(`${API_BASE}/ai-providers/${provider.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updated)
+      });
+      if (res.ok) {
+        setProviders((curr) => curr.map((p) => (p.id === provider.id ? updated : p)));
+      }
+    } catch (err) {}
+  };
 
-  function setDefault(providerId: string) {
-    startTransition(() => {
-      setProviders((current) =>
-        current.map((provider) => ({ ...provider, default: provider.id === providerId }))
-      );
-    });
-  }
+  const setDefault = async (provider: AIProviderConfig) => {
+    const updated = { ...provider, is_default: true };
+    try {
+      const res = await fetch(`${API_BASE}/ai-providers/${provider.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updated)
+      });
+      if (res.ok) {
+        fetchProviders();
+      }
+    } catch (err) {}
+  };
+
+  const handleAddDefaultOllama = async () => {
+    setSaving(true);
+    const ollamaConfig: AIProviderConfig = {
+      id: "ollama-local",
+      name: "Ollama (Local)",
+      kind: "ollama",
+      base_url: "http://localhost:11434",
+      model: "llama3",
+      enabled: true,
+      is_default: providers.length === 0,
+      priority: 1,
+      task_categories: ["report"],
+      fallback_provider_ids: [],
+      custom_headers: {},
+      temperature: 0.2,
+      max_tokens: 1600,
+      timeout_seconds: 30
+    };
+
+    try {
+      const res = await fetch(`${API_BASE}/ai-providers/${ollamaConfig.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(ollamaConfig)
+      });
+      if (res.ok) {
+        fetchProviders();
+      }
+    } catch (err) {
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
-    <main className="min-h-screen bg-background p-6 text-sm">
+    <main className="min-h-screen bg-background p-6 text-sm text-foreground">
       <div className="mx-auto flex max-w-7xl flex-col gap-5">
         <header className="flex items-start justify-between gap-4">
           <div>
-            <a className="text-sm text-primary" href="/">
-              ChangePilot
+            <a className="text-sm text-primary hover:underline" href="/">
+              ← Back to Dashboard
             </a>
-            <h1 className="mt-2 text-2xl font-semibold">AI provider settings</h1>
+            <h1 className="mt-2 text-2xl font-semibold">AI Provider Settings</h1>
             <p className="mt-1 max-w-2xl text-muted-foreground">
-              Manage provider priority, fallbacks, local models, OpenAI-compatible endpoints, and task-level defaults.
+              Manage LLM provider priority, fallbacks, local models (Ollama, LM Studio), and cloud endpoints (OpenAI, OpenRouter, Groq, Gemini, Together AI).
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline">
-              <Upload data-icon="inline-start" />
-              Import
-            </Button>
-            <Button variant="outline">
-              <Download data-icon="inline-start" />
-              Export
-            </Button>
-            <Button>
-              <Plus data-icon="inline-start" />
-              Add provider
+            <Button onClick={handleAddDefaultOllama} disabled={saving}>
+              <Plus className="size-4 mr-1" />
+              Add Local Ollama
             </Button>
           </div>
         </header>
@@ -66,101 +125,81 @@ export function AIProviderSettings() {
           <Card>
             <CardHeader>
               <div>
-                <CardTitle>Configured providers</CardTitle>
-                <CardDescription>Providers are evaluated by enabled state, task routing, priority, and fallback chain.</CardDescription>
+                <CardTitle>Configured AI Providers</CardTitle>
+                <CardDescription>Evaluated in priority order with fallback retry policies.</CardDescription>
               </div>
               <label className="flex h-9 w-72 items-center gap-2 rounded-md border border-border bg-surface px-3 text-muted-foreground">
-                <Search data-icon="inline-start" />
+                <Search className="size-4" />
                 <input
                   className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none"
-                  onChange={(event) => setQuery(event.target.value)}
+                  onChange={(e) => setQuery(e.target.value)}
                   placeholder="Search providers"
                   value={query}
                 />
               </label>
             </CardHeader>
             <CardContent>
-              <div className="flex flex-col gap-3">
-                {filteredProviders.map((provider) => (
-                  <article className="rounded-md border border-border bg-background p-4" key={provider.id}>
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex items-start gap-3">
-                        <div className="grid size-10 place-items-center rounded-md bg-primary/12 text-primary">
-                          <PlugZap />
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h2 className="font-semibold">{provider.name}</h2>
-                            {provider.default ? <Badge>Default</Badge> : null}
-                            <Badge variant={provider.status === "healthy" ? "success" : "warning"}>
-                              {provider.status}
-                            </Badge>
+              {filteredProviders.length === 0 ? (
+                <div className="py-12 text-center text-xs text-muted-foreground">
+                  No AI providers configured in PostgreSQL database. Click <strong>Add Local Ollama</strong> to create one.
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {filteredProviders.map((provider) => (
+                    <article className="rounded-md border border-border bg-background p-4" key={provider.id}>
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex items-start gap-3">
+                          <div className="grid size-10 place-items-center rounded-md bg-primary/12 text-primary">
+                            <PlugZap />
                           </div>
-                          <p className="mt-1 text-muted-foreground">
-                            {provider.kind} · {provider.model} · priority {provider.priority}
-                          </p>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h2 className="font-semibold">{provider.name}</h2>
+                              {provider.is_default && <Badge>Default</Badge>}
+                              <Badge variant={provider.enabled ? "success" : "secondary"}>
+                                {provider.enabled ? "Enabled" : "Disabled"}
+                              </Badge>
+                            </div>
+                            <p className="mt-1 text-muted-foreground">
+                              {provider.kind} · model: <code className="text-primary">{provider.model}</code> · priority {provider.priority}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <Switch
+                            checked={provider.enabled}
+                            onCheckedChange={(enabled) => toggleProvider(provider, enabled)}
+                          />
                         </div>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <Switch
-                          checked={provider.enabled}
-                          onCheckedChange={(enabled) => toggleProvider(provider.id, enabled)}
-                        />
-                        <Button size="sm" variant="outline">
-                          <TestTube2 data-icon="inline-start" />
-                          Test
+                      {!provider.is_default && (
+                        <Button className="mt-4" onClick={() => setDefault(provider)} size="sm" variant="outline">
+                          Select as default
                         </Button>
-                        <Button size="sm" variant="ghost">
-                          <Settings2 data-icon="inline-start" />
-                          Edit
-                        </Button>
-                      </div>
-                    </div>
-                    <div className="mt-4 grid gap-3 md:grid-cols-4">
-                      <div className="rounded-md border border-border bg-surface p-3">
-                        <div className="text-xs text-muted-foreground">Timeout</div>
-                        <div className="mt-1 font-medium">30s</div>
-                      </div>
-                      <div className="rounded-md border border-border bg-surface p-3">
-                        <div className="text-xs text-muted-foreground">Retry policy</div>
-                        <div className="mt-1 font-medium">2 attempts</div>
-                      </div>
-                      <div className="rounded-md border border-border bg-surface p-3">
-                        <div className="text-xs text-muted-foreground">Fallback</div>
-                        <div className="mt-1 font-medium">Next priority</div>
-                      </div>
-                      <div className="rounded-md border border-border bg-surface p-3">
-                        <div className="text-xs text-muted-foreground">Temperature</div>
-                        <div className="mt-1 font-medium">0.2</div>
-                      </div>
-                    </div>
-                    {!provider.default ? (
-                      <Button className="mt-4" onClick={() => setDefault(provider.id)} size="sm" variant="outline">
-                        Select as default
-                      </Button>
-                    ) : null}
-                  </article>
-                ))}
-              </div>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader>
-              <CardTitle>Provider contract</CardTitle>
-              <CardDescription>All providers implement the same strategy interface.</CardDescription>
+              <CardTitle>Supported Providers</CardTitle>
+              <CardDescription>Clean Architecture AI Strategy Contracts</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="flex flex-col gap-4 text-sm">
+              <div className="flex flex-col gap-3 text-xs text-muted-foreground">
                 {[
-                  "OpenAI-compatible base URL and model routing",
-                  "Ollama offline local model support",
-                  "Custom headers and optional API keys",
-                  "Runtime fallback chain without restart",
-                  "Connectivity tests and model listing"
+                  "Ollama (local models like llama3, qwen, deepseek)",
+                  "OpenAI-compatible endpoints (vLLM, LM Studio)",
+                  "OpenRouter, Groq, Together AI, Gemini",
+                  "Runtime fallback chain without app restart",
+                  "Encrypted API keys & customizable temperature"
                 ].map((item) => (
-                  <div className="flex items-start gap-3" key={item}>
-                    <span className="mt-1 size-2 rounded-full bg-primary" />
+                  <div className="flex items-center gap-2" key={item}>
+                    <Check className="size-4 text-emerald-500 shrink-0" />
                     <span>{item}</span>
                   </div>
                 ))}
@@ -172,4 +211,3 @@ export function AIProviderSettings() {
     </main>
   );
 }
-
