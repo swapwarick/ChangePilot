@@ -14,11 +14,26 @@ class AIProviderConfigRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def list_all(self) -> list[AIProviderConfig]:
+    async def list_all(self, auto_seed: bool = True) -> list[AIProviderConfig]:
         result = await self._session.execute(
             select(AIProviderConfigRow).order_by(AIProviderConfigRow.priority)
         )
-        return [self._to_schema(row) for row in result.scalars()]
+        rows = list(result.scalars())
+        if not rows and auto_seed:
+            default_ollama = AIProviderConfig(
+                id="ollama-local",
+                name="Ollama Local (qwen3:4b)",
+                kind=AIProviderKind.OLLAMA,
+                base_url="http://localhost:11434",
+                model="qwen3:4b",
+                enabled=True,
+                is_default=True,
+                priority=1,
+                timeout_seconds=120.0,
+                task_categories=["report", "explain", "general"],
+            )
+            return [await self.upsert(default_ollama)]
+        return [self._to_schema(row) for row in rows]
 
     async def upsert(self, config: AIProviderConfig) -> AIProviderConfig:
         # If this one is being set as default, clear the flag on others.

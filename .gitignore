@@ -15,9 +15,14 @@ venv/
 *.pyo
 *.pyd
 *.sqlite3
+*.db
 *.log
 .DS_Store
 Thumbs.db
 *.egg-info/
 tsconfig.tsbuildinfo
 
+storage/
+
+# Runtime storage — bare git clones and worktree checkouts
+backend/storage/

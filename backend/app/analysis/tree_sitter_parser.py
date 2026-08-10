@@ -25,6 +25,20 @@ class ImportSymbol:
 
 
 @dataclass
+class ClassSymbol:
+    name: str
+    base_classes: list[str] = field(default_factory=list)
+    methods: list[str] = field(default_factory=list)
+    is_db_model: bool = False
+
+
+@dataclass
+class FunctionSymbol:
+    name: str
+    calls: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ParsedFileAST:
     file_path: str
     file_hash: str
@@ -33,9 +47,13 @@ class ParsedFileAST:
     exports: list[str] = field(default_factory=list)
     defined_classes: list[str] = field(default_factory=list)
     defined_functions: list[str] = field(default_factory=list)
+    class_symbols: list[ClassSymbol] = field(default_factory=list)
+    function_symbols: list[FunctionSymbol] = field(default_factory=list)
+    call_references: list[str] = field(default_factory=list)
     api_routes: list[str] = field(default_factory=list)
     db_tables: list[str] = field(default_factory=list)
     framework_signals: list[str] = field(default_factory=list)
+    package_deps: list[str] = field(default_factory=list)
 
 
 class TreeSitterCodeParser:
@@ -60,6 +78,8 @@ class TreeSitterCodeParser:
             return "tsx"
         if ext in (".js", ".cjs", ".mjs"):
             return "javascript"
+        if path.name in ("package.json", "pyproject.toml", "requirements.txt"):
+            return "config"
         return None
 
     def compute_file_hash(self, content: bytes) -> str:
@@ -70,7 +90,13 @@ class TreeSitterCodeParser:
         language_name = self.detect_language(relative_path)
 
         if not language_name or language_name not in self._languages:
-            return ParsedFileAST(file_path=relative_path, file_hash=file_hash, language="text")
+            # Check package manifest parsing
+            ast_res = ParsedFileAST(file_path=relative_path, file_hash=file_hash, language=language_name or "text")
+            if relative_path.endswith("package.json"):
+                self._extract_package_json(content, ast_res)
+            elif relative_path.endswith("requirements.txt"):
+                self._extract_requirements_txt(content, ast_res)
+            return ast_res
 
         parser = Parser(self._languages[language_name])
         tree = parser.parse(content)
@@ -85,6 +111,24 @@ class TreeSitterCodeParser:
 
         return ast_result
 
+    def _extract_package_json(self, content: bytes, result: ParsedFileAST) -> None:
+        import json
+        try:
+            data = json.loads(content.decode("utf-8", errors="replace"))
+            deps = list(data.get("dependencies", {}).keys()) + list(data.get("devDependencies", {}).keys())
+            result.package_deps = deps[:50]
+        except Exception:
+            pass
+
+    def _extract_requirements_txt(self, content: bytes, result: ParsedFileAST) -> None:
+        text = content.decode("utf-8", errors="replace")
+        for line in text.splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                pkg_name = line.split("==")[0].split(">=")[0].split("<=")[0].strip()
+                if pkg_name:
+                    result.package_deps.append(pkg_name)
+
     def _extract_python_ast(self, root_node, code: str, result: ParsedFileAST) -> None:
 
         def traverse(node):
@@ -98,7 +142,7 @@ class TreeSitterCodeParser:
                 # from foo import bar
                 module_name = ""
                 for child in node.children:
-                    if child.type == "dotted_name" or child.type == "relative_import":
+                    if child.type in ("dotted_name", "relative_import"):
                         module_name = code[child.start_byte:child.end_byte]
                     elif child.type == "import_prefix":
                         module_name += code[child.start_byte:child.end_byte]
@@ -114,24 +158,67 @@ class TreeSitterCodeParser:
             elif node.type == "class_definition":
                 name_node = node.child_by_field_name("name")
                 if name_node:
-                    name = code[name_node.start_byte:name_node.end_byte]
-                    result.defined_classes.append(name)
-                    result.exports.append(name)
-                    # Check for DB models
+                    cls_name = code[name_node.start_byte:name_node.end_byte]
+                    result.defined_classes.append(cls_name)
+                    result.exports.append(cls_name)
+
+                    base_classes = []
                     superclasses = node.child_by_field_name("superclasses")
-                    if superclasses and ("Base" in code[superclasses.start_byte:superclasses.end_byte] or "Model" in code[superclasses.start_byte:superclasses.end_byte]):
-                        result.db_tables.append(name.lower())
+                    if superclasses:
+                        base_classes = [c.strip() for c in code[superclasses.start_byte:superclasses.end_byte].strip("()").split(",") if c.strip()]
+
+                    is_db = any("base" in b.lower() or "model" in b.lower() or "declarative" in b.lower() for b in base_classes)
+                    if is_db:
+                        result.db_tables.append(cls_name.lower())
+
+                    methods = []
+                    body_node = node.child_by_field_name("body")
+                    if body_node:
+                        for child in body_node.children:
+                            if child.type == "function_definition":
+                                m_name = child.child_by_field_name("name")
+                                if m_name:
+                                    methods.append(code[m_name.start_byte:m_name.end_byte])
+
+                    result.class_symbols.append(
+                        ClassSymbol(name=cls_name, base_classes=base_classes, methods=methods, is_db_model=is_db)
+                    )
+
             elif node.type == "function_definition":
                 name_node = node.child_by_field_name("name")
                 if name_node:
-                    name = code[name_node.start_byte:name_node.end_byte]
-                    result.defined_functions.append(name)
-                    result.exports.append(name)
+                    fn_name = code[name_node.start_byte:name_node.end_byte]
+                    result.defined_functions.append(fn_name)
+                    result.exports.append(fn_name)
+
+                    # Extract function call sites inside body
+                    calls = []
+                    def extract_calls(n):
+                        if n.type == "call":
+                            fn_child = n.child_by_field_name("function")
+                            if fn_child:
+                                calls.append(code[fn_child.start_byte:fn_child.end_byte])
+                        for c in n.children:
+                            extract_calls(c)
+
+                    body_node = node.child_by_field_name("body")
+                    if body_node:
+                        extract_calls(body_node)
+
+                    result.function_symbols.append(FunctionSymbol(name=fn_name, calls=calls[:20]))
+
             elif node.type == "decorator":
                 decorator_text = code[node.start_byte:node.end_byte]
-                if any(verb in decorator_text for verb in ("router.get", "router.post", "app.get", "app.post", "router.put", "router.delete")):
-                    result.api_routes.append(decorator_text.splitlines()[0])
+                if any(verb in decorator_text for verb in ("router.get", "router.post", "app.get", "app.post", "router.put", "router.delete", "router.patch")):
+                    route_line = decorator_text.splitlines()[0]
+                    result.api_routes.append(route_line)
                     result.framework_signals.append("fastapi")
+
+            elif node.type == "call":
+                fn_child = node.child_by_field_name("function")
+                if fn_child:
+                    c_name = code[fn_child.start_byte:fn_child.end_byte]
+                    result.call_references.append(c_name)
 
             for child in node.children:
                 traverse(child)
@@ -162,19 +249,34 @@ class TreeSitterCodeParser:
             elif node.type == "class_declaration":
                 name_node = node.child_by_field_name("name")
                 if name_node:
-                    result.defined_classes.append(code[name_node.start_byte:name_node.end_byte])
+                    cls_name = code[name_node.start_byte:name_node.end_byte]
+                    result.defined_classes.append(cls_name)
+                    result.class_symbols.append(ClassSymbol(name=cls_name))
             elif node.type == "function_declaration":
                 name_node = node.child_by_field_name("name")
                 if name_node:
-                    result.defined_functions.append(code[name_node.start_byte:name_node.end_byte])
+                    fn_name = code[name_node.start_byte:name_node.end_byte]
+                    result.defined_functions.append(fn_name)
+                    result.function_symbols.append(FunctionSymbol(name=fn_name))
             elif node.type == "call_expression":
                 fn_node = node.child_by_field_name("function")
                 if fn_node:
                     fn_name = code[fn_node.start_byte:fn_node.end_byte]
+                    result.call_references.append(fn_name)
                     if fn_name in ("fetch", "axios.get", "axios.post", "useQuery", "useMutation"):
                         result.framework_signals.append("react-query/http")
+
+            # Check Next.js App Router API route conventions (export async function GET / POST)
+            if "route.ts" in result.file_path or "route.js" in result.file_path:
+                if node.type == "export_statement":
+                    text = code[node.start_byte:node.end_byte]
+                    for verb in ("GET", "POST", "PUT", "DELETE", "PATCH"):
+                        if f"function {verb}" in text or f"const {verb}" in text:
+                            route_path = f"/{result.file_path.replace('app/', '').replace('/route.ts', '').replace('/route.js', '')}"
+                            result.api_routes.append(f"{verb} {route_path}")
 
             for child in node.children:
                 traverse(child)
 
         traverse(root_node)
+

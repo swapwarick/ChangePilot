@@ -25,9 +25,12 @@ class GitHubGitProvider(GitProvider):
 
     def _headers(self, token: str) -> dict[str, str]:
         clean_token = token.strip()
-        auth_header = clean_token if clean_token.startswith(("Bearer ", "token ")) else f"token {clean_token}"
+        for prefix in ("bearer ", "token "):
+            if clean_token.lower().startswith(prefix):
+                clean_token = clean_token[len(prefix):].strip()
+                break
         return {
-            "Authorization": auth_header,
+            "Authorization": f"Bearer {clean_token}",
             "Accept": "application/vnd.github.v3+json",
             "User-Agent": "ChangePilot-Impact-Analyzer",
         }

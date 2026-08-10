@@ -1,9 +1,15 @@
+import asyncio
+import sys
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import ai_providers, analysis, github, health, jobs, repositories
+from app.api.routes import ai_providers, analysis, github, health, jobs, policies, repositories
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 
 def create_app() -> FastAPI:
@@ -18,6 +24,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
+        allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -28,6 +35,7 @@ def create_app() -> FastAPI:
     app.include_router(ai_providers.router, prefix="/ai-providers", tags=["ai providers"])
     app.include_router(github.router, prefix="/github", tags=["github"])
     app.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
+    app.include_router(policies.router, prefix="/risk-policies", tags=["risk policies"])
     return app
 
 

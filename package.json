@@ -1,7 +1,7 @@
 {
   "name": "changepilot",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "workspaces": [
     "frontend"
   ],
@@ -18,4 +18,3 @@
     "npm": ">=10.0.0"
   }
 }
-

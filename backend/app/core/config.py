@@ -9,7 +9,7 @@ class Settings(BaseSettings):
 
     app_env: str = Field(default="development", alias="APP_ENV")
     backend_cors_origins: str = Field(
-        default="http://localhost:3000", alias="BACKEND_CORS_ORIGINS"
+        default="http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001", alias="BACKEND_CORS_ORIGINS"
     )
     database_url: str = Field(
         default="postgresql+psycopg://changepilot:changepilot@localhost:5432/changepilot",

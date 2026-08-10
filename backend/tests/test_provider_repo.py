@@ -54,7 +54,7 @@ async def test_delete_provider(async_session) -> None:
     await repo.upsert(_make_config("to-delete"))
 
     await repo.delete("to-delete")
-    all_configs = await repo.list_all()
+    all_configs = await repo.list_all(auto_seed=False)
     assert len(all_configs) == 0
 
 

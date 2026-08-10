@@ -1,5 +1,40 @@
 export type RiskLevel = "low" | "medium" | "high" | "critical";
 
+export type PolicyRuleConfig = {
+  signal: string;
+  name: string;
+  category: string;
+  description: string;
+  weight: number;
+  enabled: boolean;
+  threshold?: string;
+  recommendation?: string;
+  path_markers?: string[];
+  extensions?: string[];
+  custom?: boolean;
+};
+
+export type RiskPolicy = {
+  id: string;
+  name: string;
+  organization_id: string;
+  version: string;
+  description: string;
+  is_active: boolean;
+  rules: PolicyRuleConfig[];
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type PolicyComparisonResult = {
+  policy_a_version: string;
+  policy_b_version: string;
+  weight_changes: Array<{ signal: string; name: string; old_weight: number; new_weight: number }>;
+  status_changes: Array<{ signal: string; name: string; old_enabled: boolean; new_enabled: boolean }>;
+  added_rules: Array<{ signal: string; name: string; weight: number }>;
+  removed_rules: Array<{ signal: string; name: string; weight: number }>;
+};
+
 export type GitRepositoryInfo = {
   id: string;
   name: string;
@@ -41,10 +76,15 @@ export type AnalysisJobStatus = {
 
 export type RiskEvidence = {
   signal: string;
+  name?: string;
+  category?: string;
   description: string;
   weight: number;
   score: number;
   file_paths: string[];
+  recommendation?: string;
+  enabled?: boolean;
+  threshold?: string;
 };
 
 export type RiskResult = {
@@ -58,8 +98,14 @@ export type RiskResult = {
 export type GraphNode = {
   id: string;
   label: string;
-  kind: string;
+  kind: string; // repository, module, folder, file, class, function, api, database, package
   path?: string;
+  module?: string;
+  language?: string;
+  fan_in?: number;
+  fan_out?: number;
+  blast_radius?: number;
+  is_critical?: boolean;
   metadata?: Record<string, string>;
 };
 
@@ -91,9 +137,17 @@ export type ChangeAnalysisResult = {
 };
 
 export type RepoHealthMetrics = {
+  health_score?: number;
   total_files: number;
+  total_classes?: number;
+  total_functions?: number;
+  total_dependencies?: number;
   circular_dependencies: string[][];
   orphan_modules: string[];
+  dead_code_symbols?: string[];
+  god_classes?: string[];
+  high_fan_out_files?: Array<{ path: string; count: number }>;
+  high_fan_in_files?: Array<{ path: string; count: number }>;
   test_coverage_gaps: string[];
   architectural_violations: Array<{ rule: string; source: string; target: string }>;
 };

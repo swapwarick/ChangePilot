@@ -23,7 +23,7 @@ class AIProviderConfig(BaseModel):
     custom_headers: dict[str, str] = Field(default_factory=dict)
     temperature: float = Field(default=0.2, ge=0, le=2)
     max_tokens: int = Field(default=1600, ge=1, le=200000)
-    timeout_seconds: float = Field(default=30, ge=1, le=300)
+    timeout_seconds: float = Field(default=120, ge=1, le=600)
     retry_policy: RetryPolicy = Field(default_factory=RetryPolicy)
 
 

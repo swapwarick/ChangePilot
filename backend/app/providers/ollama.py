@@ -21,7 +21,8 @@ class OllamaProvider(AIProvider):
                 "num_predict": request.max_tokens or self.config.max_tokens,
             },
         }
-        async with httpx.AsyncClient(timeout=self.config.timeout_seconds) as client:
+        timeout_config = httpx.Timeout(300.0, connect=30.0)
+        async with httpx.AsyncClient(timeout=timeout_config) as client:
             response = await client.post(url, json=payload)
             response.raise_for_status()
             body = response.json()

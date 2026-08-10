@@ -70,10 +70,10 @@ export function AIProviderSettings() {
     setSaving(true);
     const ollamaConfig: AIProviderConfig = {
       id: "ollama-local",
-      name: "Ollama (Local)",
+      name: "Ollama Local (qwen3:4b)",
       kind: "ollama",
       base_url: "http://localhost:11434",
-      model: "llama3",
+      model: "qwen3:4b",
       enabled: true,
       is_default: providers.length === 0,
       priority: 1,
@@ -82,7 +82,7 @@ export function AIProviderSettings() {
       custom_headers: {},
       temperature: 0.2,
       max_tokens: 1600,
-      timeout_seconds: 30
+      timeout_seconds: 120
     };
 
     try {

@@ -48,7 +48,8 @@ export function RepoAnalyzerModal({ isOpen, onClose, onJobStarted }: RepoAnalyze
         setGithubUser(data);
         localStorage.setItem("changepilot_github_token", t);
       } else {
-        setError("GitHub Auth failed. Please check your Personal Access Token.");
+        const errData = await res.json().catch(() => ({ detail: null }));
+        setError(errData.detail || "GitHub Auth failed. Please check your Personal Access Token.");
         setGithubUser(null);
       }
     } catch (err: any) {
@@ -67,7 +68,8 @@ export function RepoAnalyzerModal({ isOpen, onClose, onJobStarted }: RepoAnalyze
         const data = await res.json();
         setRepositories(data);
       } else {
-        setError("Failed to fetch repositories.");
+        const errData = await res.json().catch(() => ({ detail: null }));
+        setError(errData.detail || "Failed to fetch repositories.");
       }
     } catch (err: any) {
       setError(`Fetch Error: ${err.message}`);

@@ -5,10 +5,15 @@ from app.models.enums import RiskLevel
 
 class RiskEvidence(BaseModel):
     signal: str
+    name: str = ""
+    category: str = "general"  # security, database, architecture, testing, infrastructure, api
     description: str
-    weight: float = Field(ge=0, le=1)
-    score: float = Field(ge=0, le=1)
+    weight: float = Field(default=0.1, ge=0, le=1)
+    score: float = Field(default=0.5, ge=0, le=1)
     file_paths: list[str] = Field(default_factory=list)
+    recommendation: str = ""
+    enabled: bool = True
+    threshold: str = ""
 
 
 class RiskInput(BaseModel):
@@ -18,6 +23,37 @@ class RiskInput(BaseModel):
     missing_tests: bool = False
     large_refactor: bool = False
     critical_modules: list[str] = Field(default_factory=list)
+    added_files: list[str] = Field(default_factory=list)
+    deleted_files: list[str] = Field(default_factory=list)
+    renamed_files: list[str] = Field(default_factory=list)
+    # Function-level precision fields (populated when diff parsing is available)
+    affected_functions: list[str] = Field(
+        default_factory=list,
+        description="Names of specific functions/classes that were changed, derived from diff line ranges.",
+    )
+    line_ranges: dict[str, list[tuple[int, int]]] = Field(
+        default_factory=dict,
+        description="Mapping of file path → list of (start, end) changed line ranges from unified diff.",
+    )
+    # Blast radius metadata (populated when graph traversal is available)
+    blast_radius_depth: int = Field(
+        default=0,
+        ge=0,
+        description="Maximum transitive depth reached during blast radius traversal.",
+    )
+    blast_radius_size: int = Field(
+        default=0,
+        ge=0,
+        description="Total number of nodes (changed + transitively impacted) in the blast radius.",
+    )
+    hub_nodes_affected: list[str] = Field(
+        default_factory=list,
+        description="Labels of high-degree hub nodes that are directly changed or in the blast radius.",
+    )
+    bridge_nodes_affected: list[str] = Field(
+        default_factory=list,
+        description="Labels of architectural bridge/chokepoint nodes in the impact set.",
+    )
 
 
 class RiskResult(BaseModel):

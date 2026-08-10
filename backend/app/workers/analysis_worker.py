@@ -15,15 +15,18 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.analysis.tree_sitter_parser import TreeSitterCodeParser
+from app.analysis.tree_sitter_parser import ImportSymbol, ParsedFileAST, TreeSitterCodeParser
 from app.database.tables import AnalysisJobRow, AnalysisRow, FileASTCacheRow, RepoKnowledgeGraphRow
 from app.graph.knowledge_graph import KnowledgeGraphBuilder
 from app.graph.neo4j_engine import Neo4jGraphEngine
 from app.models.analysis import ChangeAnalysisResult
 from app.models.enums import AnalysisTrigger
 from app.models.risk import RiskInput
+from app.providers.registry import AIProviderRegistry
+from app.repositories.provider_repo import AIProviderConfigRepository
 from app.risk.engine import DeterministicRiskEngine
 from app.services.git_cli import GitCLIManager
 from app.services.report_service import AIReportService
@@ -107,9 +110,39 @@ class AnalysisWorkerPipeline:
                                             "defined_classes": parsed.defined_classes,
                                             "defined_functions": parsed.defined_functions,
                                             "api_routes": parsed.api_routes,
+                                            "imports": [
+                                                {
+                                                    "source_module": imp.source_module,
+                                                    "imported_name": imp.imported_name,
+                                                    "alias": imp.alias,
+                                                    "is_relative": imp.is_relative,
+                                                }
+                                                for imp in parsed.imports
+                                            ],
                                         },
                                     )
                                     await session.merge(cache_row)
+                                else:
+                                    ast_data = cached.parsed_ast or {}
+                                    imports = [
+                                        ImportSymbol(
+                                            source_module=imp.get("source_module", ""),
+                                            imported_name=imp.get("imported_name", "*"),
+                                            alias=imp.get("alias"),
+                                            is_relative=imp.get("is_relative", False),
+                                        )
+                                        for imp in ast_data.get("imports", [])
+                                    ]
+                                    parsed = ParsedFileAST(
+                                        file_path=rel_path,
+                                        file_hash=file_hash,
+                                        language=cached.language,
+                                        imports=imports,
+                                        defined_classes=ast_data.get("defined_classes", []),
+                                        defined_functions=ast_data.get("defined_functions", []),
+                                        api_routes=ast_data.get("api_routes", []),
+                                    )
+                                    parsed_files.append(parsed)
                             except Exception as exc:  # noqa: BLE001
                                 logger.warning("Error parsing %s: %s", rel_path, exc)
 
@@ -119,28 +152,53 @@ class AnalysisWorkerPipeline:
             await self.update_job(job_id, "BUILDING_GRAPH", "Building Repository Knowledge Graph...", 65)
             graph, graph_hash, health_metrics = self._graph_builder.build_graph_from_parsed_files(parsed_files)
 
-            # Store Knowledge Graph in Postgres
+            # Store Knowledge Graph in DB
             async with self._session_factory() as session:
-                kg_row = RepoKnowledgeGraphRow(
-                    repository_id=repository_id,
-                    commit_sha=head_ref,
-                    graph_hash=graph_hash,
-                    nodes=[n.model_dump() for n in graph.nodes],
-                    edges=[e.model_dump() for e in graph.edges],
-                    health_metrics={
-                        "total_files": health_metrics.total_files,
-                        "circular_dependencies": health_metrics.circular_dependencies,
-                        "orphan_modules": health_metrics.orphan_modules,
-                        "test_coverage_gaps": health_metrics.test_coverage_gaps,
-                        "architectural_violations": health_metrics.architectural_violations,
-                    },
+                existing_kg_stmt = (
+                    select(RepoKnowledgeGraphRow)
+                    .where(RepoKnowledgeGraphRow.repository_id == repository_id)
+                    .order_by(RepoKnowledgeGraphRow.created_at.desc())
+                    .limit(1)
                 )
-                await session.merge(kg_row)
+                existing_kg = (await session.execute(existing_kg_stmt)).scalar_one_or_none()
+
+                health_dict = {
+                    "health_score": health_metrics.health_score,
+                    "total_files": health_metrics.total_files,
+                    "total_classes": health_metrics.total_classes,
+                    "total_functions": health_metrics.total_functions,
+                    "total_dependencies": health_metrics.total_dependencies,
+                    "circular_dependencies": health_metrics.circular_dependencies,
+                    "orphan_modules": health_metrics.orphan_modules,
+                    "dead_code_symbols": health_metrics.dead_code_symbols,
+                    "god_classes": health_metrics.god_classes,
+                    "high_fan_out_files": health_metrics.high_fan_out_files,
+                    "high_fan_in_files": health_metrics.high_fan_in_files,
+                    "test_coverage_gaps": health_metrics.test_coverage_gaps,
+                    "architectural_violations": health_metrics.architectural_violations,
+                }
+
+                if existing_kg:
+                    existing_kg.commit_sha = head_ref
+                    existing_kg.graph_hash = graph_hash
+                    existing_kg.nodes = [n.model_dump() for n in graph.nodes]
+                    existing_kg.edges = [e.model_dump() for e in graph.edges]
+                    existing_kg.health_metrics = health_dict
+                else:
+                    kg_row = RepoKnowledgeGraphRow(
+                        repository_id=repository_id,
+                        commit_sha=head_ref,
+                        graph_hash=graph_hash,
+                        nodes=[n.model_dump() for n in graph.nodes],
+                        edges=[e.model_dump() for e in graph.edges],
+                        health_metrics=health_dict,
+                    )
+                    session.add(kg_row)
                 await session.commit()
 
-            # Sync Neo4j index
+            # Sync Neo4j index & calculate Blast Radius
             await self._neo4j.sync_graph(repository_id, graph)
-            blast_radius = await self._neo4j.calculate_blast_radius(repository_id, changed_files)
+            blast_radius = await self._neo4j.calculate_blast_radius(repository_id, changed_files, graph=graph)
 
             # Step 5: SCORING (Deterministic Phase)
             await self.update_job(job_id, "SCORING", "Computing deterministic risk score...", 85)
@@ -196,10 +254,16 @@ class AnalysisWorkerPipeline:
                 await session.commit()
 
             # Step 6: AI_REPORT (Async AI Explanation)
-            await self.update_job(job_id, "COMPLETED", "Analysis Completed", 100, analysis_id=analysis_id)
+            await self.update_job(job_id, "AI_REPORT", "Generating AI explanation report...", 90, analysis_id=analysis_id)
 
-            if ai_provider_registry:
-                try:
+            try:
+                if not ai_provider_registry:
+                    async with self._session_factory() as session:
+                        configs = await AIProviderConfigRepository(session).list_all()
+                        if configs:
+                            ai_provider_registry = AIProviderRegistry(configs=configs)
+
+                if ai_provider_registry:
                     report_service = AIReportService(provider_registry=ai_provider_registry)
                     ai_report_text = await report_service.generate_report(analysis)
                     async with self._session_factory() as session:
@@ -207,8 +271,10 @@ class AnalysisWorkerPipeline:
                         if row:
                             row.ai_report = ai_report_text
                             await session.commit()
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("Async AI Report generation warning: %s", exc)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Async AI Report generation warning (non-fatal): %s", exc)
+
+            await self.update_job(job_id, "COMPLETED", "Analysis Completed", 100, analysis_id=analysis_id)
 
         except Exception as exc:
             logger.exception("Analysis job failed: %s", job_id)

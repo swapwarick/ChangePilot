@@ -134,3 +134,20 @@ class AIProviderConfigRow(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, server_default=func.now()
     )
+
+
+class RiskPolicyRow(Base):
+    __tablename__ = "risk_policies"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default-org")
+    version: Mapped[str] = mapped_column(String(40), nullable=False, default="1.0.0")
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    rules: Mapped[dict] = mapped_column(JSON, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, server_default=func.now()
+    )
+
