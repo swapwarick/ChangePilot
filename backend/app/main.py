@@ -41,6 +41,15 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    @app.get("/")
+    def root() -> dict[str, str]:
+        return {
+            "name": "ChangePilot API",
+            "status": "running",
+            "docs": "/docs",
+            "health": "/health",
+        }
+
     app.include_router(health.router, prefix="/health", tags=["health"])
     app.include_router(auth.router, prefix="/auth", tags=["auth"])
     app.include_router(repositories.router, prefix="/repositories", tags=["repositories"])
