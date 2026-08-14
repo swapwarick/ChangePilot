@@ -64,8 +64,7 @@ import { JobProgressBanner } from "@/features/analysis/job-progress-banner";
 import { AIProviderSettings } from "@/features/providers/provider-settings";
 import { UserMenu } from "@/components/user-menu";
 import { AIProviderConfig, ChangeAnalysisResult, PolicyComparisonResult, PolicyRuleConfig, RepoKnowledgeGraph, RiskPolicy } from "@/types/api";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+import { getApiBaseUrl } from "@/lib/api-config";
 
 const navItems = [
   { label: "Dashboard", icon: LayoutDashboard },
@@ -155,7 +154,7 @@ export function Dashboard() {
 
   const fetchPolicies = async () => {
     try {
-      const res = await fetch(`${API_BASE}/risk-policies`);
+      const res = await fetch(`${getApiBaseUrl()}/risk-policies`);
       if (res.ok) {
         const list: RiskPolicy[] = await res.json();
         setAllPolicies(list);
@@ -175,7 +174,7 @@ export function Dashboard() {
   const fetchDashboardData = async () => {
     setLoading(true);
     try {
-      const repoRes = await fetch(`${API_BASE}/repositories`);
+      const repoRes = await fetch(`${getApiBaseUrl()}/repositories`);
       if (repoRes.ok) {
         const repoData = await repoRes.json();
         setRepositories(repoData);
@@ -184,7 +183,7 @@ export function Dashboard() {
         }
       }
 
-      const provRes = await fetch(`${API_BASE}/ai-providers`);
+      const provRes = await fetch(`${getApiBaseUrl()}/ai-providers`);
       if (provRes.ok) {
         setProviders(await provRes.json());
       }
@@ -210,13 +209,13 @@ export function Dashboard() {
 
     try {
       // 2. Fetch Analyses for active repository only
-      const anlRes = await fetch(`${API_BASE}/analysis?repository_id=${repoId}`);
+      const anlRes = await fetch(`${getApiBaseUrl()}/analysis?repository_id=${repoId}`);
       if (anlRes.ok) {
         setAnalyses(await anlRes.json());
       }
 
       // 3. Fetch Knowledge Graph for active repository only
-      const kgRes = await fetch(`${API_BASE}/jobs/repositories/${repoId}/knowledge-graph`);
+      const kgRes = await fetch(`${getApiBaseUrl()}/jobs/repositories/${repoId}/knowledge-graph`);
       if (kgRes.ok) {
         setKnowledgeGraph(await kgRes.json());
       }
@@ -227,7 +226,7 @@ export function Dashboard() {
         if (repoObj.source === "local" || repoObj.owner === "local" || !repoObj.owner) {
           try {
             const localPath = repoObj.url || repoObj.name;
-            const infoRes = await fetch(`${API_BASE}/local/info?path=${encodeURIComponent(localPath)}`);
+            const infoRes = await fetch(`${getApiBaseUrl()}/local/info?path=${encodeURIComponent(localPath)}`);
             if (infoRes.ok) {
               const info = await infoRes.json();
               if (info.branches && info.branches.length > 0) {
@@ -240,10 +239,10 @@ export function Dashboard() {
             const token = localStorage.getItem("github_token") || localStorage.getItem("changepilot_github_token") || "";
             if (token) {
               const headers: Record<string, string> = { Authorization: token };
-              const prRes = await fetch(`${API_BASE}/github/repositories/${repoObj.owner}/${repoObj.name}/pulls`, { headers });
+              const prRes = await fetch(`${getApiBaseUrl()}/github/repositories/${repoObj.owner}/${repoObj.name}/pulls`, { headers });
               if (prRes.ok) setPullRequests(await prRes.json());
 
-              const brRes = await fetch(`${API_BASE}/github/repositories/${repoObj.owner}/${repoObj.name}/branches`, { headers });
+              const brRes = await fetch(`${getApiBaseUrl()}/github/repositories/${repoObj.owner}/${repoObj.name}/branches`, { headers });
               if (brRes.ok) setBranches(await brRes.json());
             }
           } catch (gitErr) {}
@@ -296,7 +295,7 @@ export function Dashboard() {
       const repoUrl = repoObj.url || (repoObj.source === "local" ? repoObj.name : `https://github.com/${repoObj.owner || "local"}/${repoObj.name}`);
       const ownerName = repoObj.owner || (repoObj.source === "local" ? "local" : "github");
 
-      const res = await fetch(`${API_BASE}/jobs`, {
+      const res = await fetch(`${getApiBaseUrl()}/jobs`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -341,7 +340,7 @@ export function Dashboard() {
         ...selectedPolicy,
         rules: editingRules
       };
-      const res = await fetch(`${API_BASE}/risk-policies/${selectedPolicy.id}`, {
+      const res = await fetch(`${getApiBaseUrl()}/risk-policies/${selectedPolicy.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updatedPolicy)
@@ -364,7 +363,7 @@ export function Dashboard() {
   const handleActivateCurrentPolicy = async () => {
     if (!selectedPolicy) return;
     try {
-      const res = await fetch(`${API_BASE}/risk-policies/${selectedPolicy.id}/activate`, {
+      const res = await fetch(`${getApiBaseUrl()}/risk-policies/${selectedPolicy.id}/activate`, {
         method: "PUT"
       });
       if (res.ok) {
@@ -387,7 +386,7 @@ export function Dashboard() {
       const minor = parseInt(parts[1] || "0") + 1;
       const newVer = `${major}.${minor}.0`;
 
-      const res = await fetch(`${API_BASE}/risk-policies`, {
+      const res = await fetch(`${getApiBaseUrl()}/risk-policies`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -457,7 +456,7 @@ export function Dashboard() {
       fileReader.onload = async (event) => {
         try {
           const parsed = JSON.parse(event.target?.result as string);
-          const res = await fetch(`${API_BASE}/risk-policies/import`, {
+          const res = await fetch(`${getApiBaseUrl()}/risk-policies/import`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(parsed)
@@ -480,7 +479,7 @@ export function Dashboard() {
   const handleCompareSubmit = async () => {
     if (!comparePolicyAId || !comparePolicyBId) return;
     try {
-      const res = await fetch(`${API_BASE}/risk-policies/compare?policy_a=${comparePolicyAId}&policy_b=${comparePolicyBId}`);
+      const res = await fetch(`${getApiBaseUrl()}/risk-policies/compare?policy_a=${comparePolicyAId}&policy_b=${comparePolicyBId}`);
       if (res.ok) {
         setComparisonData(await res.json());
       }

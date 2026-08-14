@@ -7,8 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { AIProviderConfig } from "@/types/api";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+import { getApiBaseUrl } from "@/lib/api-config";
 
 // ---------- preset model catalogues ----------
 const GROQ_MODELS = [
@@ -40,7 +39,7 @@ export function AIProviderSettings() {
   const fetchProviders = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/ai-providers`);
+      const res = await fetch(`${getApiBaseUrl()}/ai-providers`);
       if (res.ok) {
         setProviders(await res.json());
       }
@@ -75,7 +74,7 @@ export function AIProviderSettings() {
   const toggleProvider = async (provider: AIProviderConfig, enabled: boolean) => {
     const updated = { ...provider, enabled };
     try {
-      const res = await fetch(`${API_BASE}/ai-providers/${provider.id}`, {
+      const res = await fetch(`${getApiBaseUrl()}/ai-providers/${provider.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updated),
@@ -89,7 +88,7 @@ export function AIProviderSettings() {
   const setDefault = async (provider: AIProviderConfig) => {
     const updated = { ...provider, is_default: true };
     try {
-      const res = await fetch(`${API_BASE}/ai-providers/${provider.id}`, {
+      const res = await fetch(`${getApiBaseUrl()}/ai-providers/${provider.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updated),
@@ -119,7 +118,7 @@ export function AIProviderSettings() {
       timeout_seconds: 120,
     };
     try {
-      const res = await fetch(`${API_BASE}/ai-providers/${cfg.id}`, {
+      const res = await fetch(`${getApiBaseUrl()}/ai-providers/${cfg.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(cfg),
@@ -164,7 +163,7 @@ export function AIProviderSettings() {
     };
 
     try {
-      const res = await fetch(`${API_BASE}/ai-providers/${id}`, {
+      const res = await fetch(`${getApiBaseUrl()}/ai-providers/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(cfg),

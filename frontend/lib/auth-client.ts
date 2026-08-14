@@ -4,7 +4,7 @@
  * so we call our own /auth/* REST endpoints and manage tokens in localStorage.
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+import { getApiBaseUrl } from "./api-config";
 
 export interface AuthUser {
   id: string;
@@ -73,7 +73,7 @@ function storeUser(user: AuthUser): void {
 // ---------------------------------------------------------------------------
 
 async function authFetch(path: string, init?: RequestInit): Promise<Response> {
-  return fetch(`${API_BASE}/auth${path}`, {
+  return fetch(`${getApiBaseUrl()}/auth${path}`, {
     headers: { "Content-Type": "application/json" },
     ...init,
   });
@@ -81,7 +81,7 @@ async function authFetch(path: string, init?: RequestInit): Promise<Response> {
 
 async function authFetchAuthed(path: string, init?: RequestInit): Promise<Response> {
   const token = getAccessToken();
-  return fetch(`${API_BASE}/auth${path}`, {
+  return fetch(`${getApiBaseUrl()}/auth${path}`, {
     headers: {
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -182,7 +182,7 @@ export function isAuthenticated(): boolean {
 
 /** Check backend config (e.g. is_cloud). */
 export async function getAuthConfig(): Promise<{ is_cloud: boolean }> {
-  const res = await fetch(`${API_BASE}/auth/config`);
+  const res = await fetch(`${getApiBaseUrl()}/auth/config`);
   if (!res.ok) return { is_cloud: false };
   return res.json();
 }

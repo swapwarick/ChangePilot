@@ -28,8 +28,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { GitRepositoryInfo, GitBranchInfo, GitCommitInfo } from "@/types/api";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+import { getApiBaseUrl } from "@/lib/api-config";
 
 interface RepoAnalyzerModalProps {
   isOpen: boolean;
@@ -130,8 +129,8 @@ export function RepoAnalyzerModal({ isOpen, onClose, onJobStarted }: RepoAnalyze
     try {
       const targetPath = path && path.trim() ? path.trim() : undefined;
       const url = targetPath
-        ? `${API_BASE}/local/browse?path=${encodeURIComponent(targetPath)}`
-        : `${API_BASE}/local/browse`;
+        ? `${getApiBaseUrl()}/local/browse?path=${encodeURIComponent(targetPath)}`
+        : `${getApiBaseUrl()}/local/browse`;
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
@@ -152,7 +151,7 @@ export function RepoAnalyzerModal({ isOpen, onClose, onJobStarted }: RepoAnalyze
         const rootController = new AbortController();
         const rootTimeoutId = setTimeout(() => rootController.abort(), 3000);
         try {
-          const rootRes = await fetch(`${API_BASE}/local/browse`, { signal: rootController.signal });
+          const rootRes = await fetch(`${getApiBaseUrl()}/local/browse`, { signal: rootController.signal });
           clearTimeout(rootTimeoutId);
           if (rootRes.ok) setBrowseData(await rootRes.json());
         } catch (err) {
@@ -174,8 +173,8 @@ export function RepoAnalyzerModal({ isOpen, onClose, onJobStarted }: RepoAnalyze
       try {
         const root = browseData?.current_path || undefined;
         const url = root
-          ? `${API_BASE}/local/search?query=${encodeURIComponent(q)}&root=${encodeURIComponent(root)}`
-          : `${API_BASE}/local/search?query=${encodeURIComponent(q)}`;
+          ? `${getApiBaseUrl()}/local/search?query=${encodeURIComponent(q)}&root=${encodeURIComponent(root)}`
+          : `${getApiBaseUrl()}/local/search?query=${encodeURIComponent(q)}`;
         const res = await fetch(url);
         if (res.ok) setSearchResults(await res.json());
       } catch (e) {} finally { setSearchLoading(false); }
@@ -193,7 +192,7 @@ export function RepoAnalyzerModal({ isOpen, onClose, onJobStarted }: RepoAnalyze
 
   const fetchCurrentWorkspace = async () => {
     try {
-      const res = await fetch(`${API_BASE}/local/workspace`);
+      const res = await fetch(`${getApiBaseUrl()}/local/workspace`);
       if (res.ok) {
         const data = await res.json();
         if (data.path) {
@@ -209,7 +208,7 @@ export function RepoAnalyzerModal({ isOpen, onClose, onJobStarted }: RepoAnalyze
     setLoadingLocal(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/local/info?path=${encodeURIComponent(targetPath.trim())}`);
+      const res = await fetch(`${getApiBaseUrl()}/local/info?path=${encodeURIComponent(targetPath.trim())}`);
       if (res.ok) {
         const info: LocalRepoInfo = await res.json();
         setLocalInfo(info);
@@ -237,7 +236,7 @@ export function RepoAnalyzerModal({ isOpen, onClose, onJobStarted }: RepoAnalyze
 
   const fetchGithubUser = async (t: string) => {
     try {
-      const res = await fetch(`${API_BASE}/github/user`, {
+      const res = await fetch(`${getApiBaseUrl()}/github/user`, {
         headers: { Authorization: t }
       });
       if (res.ok) {
@@ -258,7 +257,7 @@ export function RepoAnalyzerModal({ isOpen, onClose, onJobStarted }: RepoAnalyze
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/github/repositories?query=${encodeURIComponent(query)}`, {
+      const res = await fetch(`${getApiBaseUrl()}/github/repositories?query=${encodeURIComponent(query)}`, {
         headers: { Authorization: t }
       });
       if (res.ok) {
@@ -290,7 +289,7 @@ export function RepoAnalyzerModal({ isOpen, onClose, onJobStarted }: RepoAnalyze
 
   const fetchBranches = async (owner: string, repo: string, t: string) => {
     try {
-      const res = await fetch(`${API_BASE}/github/repositories/${owner}/${repo}/branches`, {
+      const res = await fetch(`${getApiBaseUrl()}/github/repositories/${owner}/${repo}/branches`, {
         headers: { Authorization: t }
       });
       if (res.ok) {
@@ -302,7 +301,7 @@ export function RepoAnalyzerModal({ isOpen, onClose, onJobStarted }: RepoAnalyze
 
   const fetchCommits = async (owner: string, repo: string, branch: string, t: string) => {
     try {
-      const res = await fetch(`${API_BASE}/github/repositories/${owner}/${repo}/commits?branch=${branch}`, {
+      const res = await fetch(`${getApiBaseUrl()}/github/repositories/${owner}/${repo}/commits?branch=${branch}`, {
         headers: { Authorization: t }
       });
       if (res.ok) {
@@ -321,7 +320,7 @@ export function RepoAnalyzerModal({ isOpen, onClose, onJobStarted }: RepoAnalyze
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/jobs`, {
+      const res = await fetch(`${getApiBaseUrl()}/jobs`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -355,7 +354,7 @@ export function RepoAnalyzerModal({ isOpen, onClose, onJobStarted }: RepoAnalyze
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/jobs`, {
+      const res = await fetch(`${getApiBaseUrl()}/jobs`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
