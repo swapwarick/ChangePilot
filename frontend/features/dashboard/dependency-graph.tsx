@@ -53,6 +53,7 @@ interface DependencyGraphProps {
 // ---- Edge type configuration ------------------------------------------------
 const EDGE_TYPE_CONFIG: Record<string, { color: string; label: string; description: string; dashArray?: string }> = {
   SOURCE_IMPORT:      { color: "#6366f1", label: "IMPORTS",      description: "AST source import relationship" },
+  IMPORTS:            { color: "#6366f1", label: "IMPORTS",       description: "AST source import relationship" },
   DYNAMIC_IMPORT:     { color: "#8b5cf6", label: "DYN IMPORT",   description: "Dynamic import() relationship",   dashArray: "6 3" },
   DEPENDS_ON:         { color: "#3b82f6", label: "DEPENDS_ON",   description: "Internal/module dependency" },
   PACKAGE_DEPENDENCY: { color: "#f59e0b", label: "PACKAGE DEP",  description: "package.json / requirements dependency", dashArray: "4 2" },
@@ -60,9 +61,13 @@ const EDGE_TYPE_CONFIG: Record<string, { color: string; label: string; descripti
   TEST_REFERENCE:     { color: "#22d3ee", label: "TEST REF",      description: "Test-to-source relationship",      dashArray: "5 3" },
   ROUTE_REFERENCE:    { color: "#f97316", label: "ROUTE REF",     description: "Route-to-handler relationship" },
   CONFIG_REFERENCE:   { color: "#94a3b8", label: "CONFIG REF",    description: "Configuration relationship",       dashArray: "3 3" },
-  BUILD_DEPENDENCY:   { color: "#64748b", label: "BUILD DEP",     description: "Build tool dependency",            dashArray: "2 4" },
+  BUILD_DEPENDENCY:   { color: "#06b6d4", label: "STRUCTURE",     description: "Module / folder / file structural containment" },
+  EXPORTS:            { color: "#a855f7", label: "EXPORTS",       description: "Module / class exports" },
+  INHERITS:           { color: "#ec4899", label: "INHERITS",      description: "Class inheritance relationship" },
+  DEFINES_MODEL:      { color: "#f43f5e", label: "DEFINES MODEL", description: "Database model definition" },
+  DEFINES_ROUTE:      { color: "#ea580c", label: "DEFINES ROUTE", description: "API Route definition" },
+  USES:               { color: "#14b8a6", label: "USES",          description: "Usage relationship" },
   SELF_IMPORT:        { color: "#ef4444", label: "SELF IMPORT",   description: "Self-referencing import (ignored)" },
-  IMPORTS:            { color: "#6366f1", label: "IMPORTS",       description: "AST source import relationship" },
 };
 
 const DEFAULT_EDGE_COLOR = "#6366f1";
@@ -72,10 +77,8 @@ function getEdgeConfig(edgeType?: string, relationship?: string) {
   return EDGE_TYPE_CONFIG[key] ?? { color: DEFAULT_EDGE_COLOR, label: key, description: key };
 }
 
-// ---- Default visible edge types (exclude package/config noise by default) ---
-const DEFAULT_VISIBLE_EDGE_TYPES = new Set([
-  "SOURCE_IMPORT", "IMPORTS", "DYNAMIC_IMPORT", "DEPENDS_ON", "CALLS", "TEST_REFERENCE", "ROUTE_REFERENCE",
-]);
+// ---- Default visible edge types (ALL types enabled by default) ---
+const DEFAULT_VISIBLE_EDGE_TYPES = new Set(Object.keys(EDGE_TYPE_CONFIG));
 
 // ---- Folder metric computation (pure, runs once per graph) ------------------
 interface FolderMetrics {
@@ -240,6 +243,13 @@ function CustomGraphNode({ data }: NodeProps) {
       <Handle
         type="target"
         position={Position.Left}
+        id="target-left"
+        className="!w-2.5 !h-2.5 !bg-indigo-500 !border-2 !border-background hover:!scale-125 transition-transform"
+      />
+      <Handle
+        type="target"
+        position={Position.Top}
+        id="target-top"
         className="!w-2.5 !h-2.5 !bg-indigo-500 !border-2 !border-background hover:!scale-125 transition-transform"
       />
 
@@ -270,7 +280,14 @@ function CustomGraphNode({ data }: NodeProps) {
 
       <Handle
         type="source"
+        position={Position.Bottom}
+        id="source-bottom"
+        className="!w-2.5 !h-2.5 !bg-indigo-500 !border-2 !border-background hover:!scale-125 transition-transform"
+      />
+      <Handle
+        type="source"
         position={Position.Right}
+        id="source-right"
         className="!w-2.5 !h-2.5 !bg-indigo-500 !border-2 !border-background hover:!scale-125 transition-transform"
       />
     </div>
@@ -651,8 +668,21 @@ function DependencyGraphInner({ nodes = [], edges = [], graphHealth }: Dependenc
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   // Edge type filtering — multi-select set
-  const [activeEdgeTypes, setActiveEdgeTypes] = useState<Set<string>>(new Set(DEFAULT_VISIBLE_EDGE_TYPES));
+  const [activeEdgeTypes, setActiveEdgeTypes] = useState<Set<string>>(() => new Set(DEFAULT_VISIBLE_EDGE_TYPES));
   const [showEdgeFilter, setShowEdgeFilter] = useState(false);
+
+  useEffect(() => {
+    if (edges.length > 0) {
+      setActiveEdgeTypes((prev) => {
+        const next = new Set(prev);
+        edges.forEach((e) => {
+          const k = e.edge_type || e.relationship || "IMPORTS";
+          next.add(k);
+        });
+        return next;
+      });
+    }
+  }, [edges]);
 
   const nodeTypes = useMemo(() => ({ custom: CustomGraphNode }), []);
 
@@ -851,16 +881,16 @@ function DependencyGraphInner({ nodes = [], edges = [], graphHealth }: Dependenc
         labelBgStyle: { fill: "#f8fafc", rx: 4, ry: 4 },
         animated: Boolean(isConnected),
         style: {
-          stroke: isConnected ? cfg.color : cfg.color,
-          strokeWidth: isConnected ? 2.5 : 1.5,
-          opacity: isDimmed ? 0.12 : 0.9,
+          stroke: isConnected ? "#4f46e5" : (cfg.color || "#6366f1"),
+          strokeWidth: isConnected ? 3.5 : 2,
+          opacity: isDimmed ? 0.25 : 0.95,
           strokeDasharray: cfg.dashArray ?? undefined,
         },
         markerEnd: {
           type: MarkerType.ArrowClosed,
-          color: cfg.color,
-          width: 12,
-          height: 12,
+          color: isConnected ? "#4f46e5" : (cfg.color || "#6366f1"),
+          width: 14,
+          height: 14,
         },
       };
     });
@@ -1037,6 +1067,7 @@ function DependencyGraphInner({ nodes = [], edges = [], graphHealth }: Dependenc
                 const target = nodes.find((n) => n.id === node.id);
                 setSelectedNode((prev) => prev?.id === node.id ? null : (target || null));
               }}
+              onPaneClick={() => setSelectedNode(null)}
               onNodeMouseEnter={(_, node) => setHoveredNodeId(node.id)}
               onNodeMouseLeave={() => setHoveredNodeId(null)}
               fitView
