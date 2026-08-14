@@ -254,14 +254,19 @@ class AnalysisWorkerPipeline:
                     dependency_graph=graph.model_dump(),
                     risk_score=risk_result.score,
                     risk_level=risk_result.level.value,
-                    risk_confidence=risk_result.confidence,
+                    risk_confidence=risk_result.evidence_completeness,
+                    evidence_completeness=risk_result.evidence_completeness,
+                    is_calibrated=risk_result.is_calibrated,
+                    calibration_status=risk_result.calibration_status,
                     risk_evidence=[e.model_dump() for e in risk_result.evidence],
                     risk_reasons=risk_result.reasons,
                     ai_report=analysis.ai_report,
                     parser_version="1.0.0-treesitter",
                     graph_version="1.0.0",
                     risk_engine_version="1.0.0-deterministic",
-                    ai_prompt_version="1.0.0",
+                    risk_policy_version="1.0.0",
+                    analysis_version="1.0.0",
+                    ai_prompt_version="2.0.0",
                     user_id=user_id,
                     is_ephemeral=is_ephemeral,
                 )
@@ -313,18 +318,113 @@ class AnalysisWorkerPipeline:
     @staticmethod
     def _build_fallback_report(analysis: ChangeAnalysisResult, reason: str) -> str:
         level_str = str(analysis.risk.level.value if hasattr(analysis.risk.level, "value") else analysis.risk.level).upper()
+        risk = analysis.risk
+        completeness_pct = int(round(risk.evidence_completeness * 100))
+
         lines = [
-            f"### Change Analysis Summary ({level_str} RISK)",
-            f"*{reason} Showing deterministic structural analysis.*",
+            "# Change Risk Assessment",
             "",
-            f"**Risk Score**: {analysis.risk.score:.2f} / 1.00 (Confidence: {int(analysis.risk.confidence * 100)}%)",
-            f"**Changed Files**: {len(analysis.changed_files)} file(s)",
-            f"**Impacted Modules**: {', '.join(analysis.impacted_modules) if analysis.impacted_modules else 'None'}",
+            f"> *Note: {reason} Rendered using deterministic evidence synthesis.*",
             "",
-            "#### Deterministic Risk Factors",
+            "## Risk Summary",
+            f"- **Risk Score**: {risk.score}/100",
+            f"- **Risk Level**: {level_str}",
+            f"- **Evidence Completeness**: {completeness_pct}%",
+            f"- **Risk Prediction Calibration**: {risk.calibration_status}",
+            "",
+            f"*{risk.score_description}*",
+            "",
+            "## Facts",
         ]
-        for item in sorted(analysis.risk.evidence, key=lambda x: x.weight * x.score, reverse=True):
-            lines.append(f"- **{item.name or item.signal}** ({item.category.title()}): {item.description}")
-            if item.recommendation:
-                lines.append(f"  *Recommendation*: {item.recommendation}")
+        if risk.facts:
+            for fact in risk.facts:
+                lines.append(f"- **[{fact.id}]**: {fact.claim} *(Source: {fact.source_evidence})*")
+        else:
+            lines.append(f"- **[FACT-001]**: {len(analysis.changed_files)} file(s) modified in change set.")
+            if analysis.impacted_modules:
+                lines.append(f"- **[FACT-002]**: {len(analysis.impacted_modules)} architectural modules impacted.")
+
+        lines.extend([
+            "",
+            "## Impact Analysis",
+        ])
+        if risk.inferences:
+            for inf in risk.inferences:
+                lines.append(f"- **[{inf.id}]**: {inf.claim}")
+        else:
+            lines.append(f"- Transitive blast radius encompasses {len(analysis.dependency_graph.nodes)} graph nodes and {len(analysis.dependency_graph.edges)} dependency edges.")
+
+        lines.extend([
+            "",
+            "## Risk Factors",
+        ])
+        if risk.risk_breakdown:
+            lines.append("| Rule | Category | Points | Evidence | Affected Files |")
+            lines.append("| :--- | :--- | :---: | :--- | :--- |")
+            for item in sorted(risk.risk_breakdown, key=lambda x: x.points, reverse=True):
+                files_str = ", ".join(item.affected_files[:2]) + ("..." if len(item.affected_files) > 2 else "") if item.affected_files else "N/A"
+                lines.append(f"| **{item.rule}** | {item.category.title()} | +{item.points} | {item.evidence} | `{files_str}` |")
+        else:
+            for item in sorted(risk.evidence, key=lambda x: x.weight * x.score, reverse=True):
+                lines.append(f"- **{item.name or item.signal}** (+{int(round(item.weight * item.score * 100))} pts): {item.description}")
+
+        lines.extend([
+            "",
+            "## Failure Scenarios",
+        ])
+        if risk.potential_failure_scenarios:
+            for sc in risk.potential_failure_scenarios:
+                lines.append(f"- {sc}")
+        else:
+            lines.append("- **Potential Scenario**: Regressions in modified business logic may introduce unexpected errors in downstream dependent components.")
+
+        lines.extend([
+            "",
+            "## Recommended Actions",
+        ])
+        evidence_recs = [r for r in risk.recommendations if getattr(r, "recommendation_type", None) == "EVIDENCE_BACKED"]
+        policy_recs = [r for r in risk.recommendations if getattr(r, "recommendation_type", None) == "POLICY_BASED"]
+        generic_recs = [r for r in risk.recommendations if getattr(r, "recommendation_type", None) == "GENERIC_BEST_PRACTICE"]
+
+        if evidence_recs:
+            lines.append("### Evidence-Backed Recommendations")
+            for r in evidence_recs:
+                lines.append(f"- **[{r.id}]**: {r.claim}")
+        if policy_recs:
+            lines.append("### Policy-Based Recommendations")
+            for r in policy_recs:
+                lines.append(f"- **[{r.id}]**: {r.claim}")
+        if generic_recs:
+            lines.append("### Generic Best Practices")
+            for r in generic_recs:
+                lines.append(f"- **[{r.id}]**: {r.claim}")
+        if not (evidence_recs or policy_recs or generic_recs):
+            for ev in risk.evidence:
+                if ev.recommendation:
+                    lines.append(f"- {ev.recommendation}")
+
+        lines.extend([
+            "",
+            "## Reviewer / Ownership Analysis",
+        ])
+        if risk.recommended_review_areas:
+            for area in risk.recommended_review_areas:
+                reviewer = area.get("suggested_reviewer")
+                if reviewer:
+                    lines.append(f"- **Recommended review area**: `{area['review_area']}` — Suggested Reviewer: **{reviewer}** *(Evidence: {area.get('evidence', '')})*")
+                else:
+                    lines.append(f"- **Recommended review area**: `{area['review_area']}` — *{area.get('ownership_note', 'Reviewer ownership could not be determined from available repository evidence.')}*")
+        else:
+            lines.append("- Reviewer ownership could not be determined from available repository evidence.")
+
+        lines.extend([
+            "",
+            "## Deployment Considerations",
+        ])
+        if risk.deployment_considerations:
+            for dep in risk.deployment_considerations:
+                lines.append(f"- {dep}")
+        else:
+            lines.append("- These components share dependency relationships and should be tested together. Deployment topology evidence was not detected.")
+
         return "\n".join(lines)

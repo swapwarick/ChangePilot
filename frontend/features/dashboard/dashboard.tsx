@@ -63,7 +63,7 @@ import { RepoAnalyzerModal } from "@/features/github/repo-analyzer-modal";
 import { JobProgressBanner } from "@/features/analysis/job-progress-banner";
 import { AIProviderSettings } from "@/features/providers/provider-settings";
 import { UserMenu } from "@/components/user-menu";
-import { AIProviderConfig, ChangeAnalysisResult, PolicyComparisonResult, PolicyRuleConfig, RepoKnowledgeGraph, RiskPolicy } from "@/types/api";
+import { AIProviderConfig, ChangeAnalysisResult, PolicyComparisonResult, PolicyRuleConfig, RepoKnowledgeGraph, RiskBreakdownItem, RiskPolicy } from "@/types/api";
 import { getApiBaseUrl } from "@/lib/api-config";
 import { authHeader } from "@/lib/auth-client";
 
@@ -71,7 +71,7 @@ const navItems = [
   { label: "Dashboard", icon: LayoutDashboard },
   { label: "Analyses", icon: Activity },
   { label: "Pull Requests", icon: GitPullRequest },
-  { label: "Services", icon: Boxes },
+  { label: "Modules", icon: Boxes },
   { label: "Dependencies", icon: Network },
   { label: "Risk Policies", icon: ShieldCheck },
   { label: "AI Insights", icon: Sparkles },
@@ -152,6 +152,10 @@ export function Dashboard() {
   const [comparePolicyAId, setComparePolicyAId] = useState<string>("");
   const [comparePolicyBId, setComparePolicyBId] = useState<string>("");
   const [comparisonData, setComparisonData] = useState<PolicyComparisonResult | null>(null);
+
+  // Evidence Explorer State
+  const [evidenceFilter, setEvidenceFilter] = useState<"ALL" | "FACT" | "INFERENCE" | "RECOMMENDATION">("ALL");
+  const [selectedRuleModal, setSelectedRuleModal] = useState<RiskBreakdownItem | null>(null);
 
   const fetchPolicies = async () => {
     try {
@@ -571,7 +575,7 @@ export function Dashboard() {
         <header className="flex min-h-16 flex-col items-stretch justify-between gap-3 border-b border-border bg-surface/80 px-4 py-3 backdrop-blur sm:flex-row sm:items-center sm:px-5">
           <div className="flex h-10 w-full items-center gap-2 rounded-md border border-border bg-background px-3 text-muted-foreground sm:max-w-[520px]">
             <Search className="size-4" />
-            <span className="text-sm">Search services, repositories, analyses...</span>
+            <span className="text-sm">Search modules, components, repositories, analyses...</span>
             <kbd className="ml-auto rounded-sm border border-border px-1.5 py-0.5 text-xs">⌘ K</kbd>
           </div>
           <div className="flex items-center justify-end gap-2">
@@ -628,20 +632,20 @@ export function Dashboard() {
                 <Card className="xl:col-span-2">
                   <CardHeader>
                     <div>
-                      <CardTitle>Deterministic Risk & Repository Health</CardTitle>
+                      <CardTitle>Deterministic Change Risk & Repository Health</CardTitle>
                       <CardDescription>
-                        {activeRepoId ? `Repository ${activeRepoId} persistent analysis` : "Connect a repository to analyze"}
+                        {latestAnalysis?.risk.score_description || (activeRepoId ? `Repository ${activeRepoId} persistent analysis` : "Connect a repository to analyze")}
                       </CardDescription>
                     </div>
                   </CardHeader>
                   <CardContent>
-                    <div className="grid gap-4 lg:grid-cols-[420px_repeat(4,1fr)]">
+                    <div className="grid gap-4 lg:grid-cols-[440px_repeat(4,1fr)]">
                       <div className="flex items-center gap-8">
                         <Donut score={latestAnalysis?.risk.score || 0} />
-                        <div className="flex flex-col gap-3">
+                        <div className="flex flex-col gap-2.5">
                           <div className="flex items-center gap-3">
                             <span className="size-2.5 rounded-full bg-primary" />
-                            <span className="min-w-28 text-muted-foreground">Risk Level</span>
+                            <span className="min-w-36 text-muted-foreground text-xs">Risk Level</span>
                             {latestAnalysis ? (
                               <Badge variant={levelVariant(latestAnalysis.risk.level || "low")}>
                                 {latestAnalysis.risk.level?.toUpperCase() || "LOW"}
@@ -651,16 +655,25 @@ export function Dashboard() {
                             )}
                           </div>
                           <div className="flex items-center gap-3">
-                            <span className="size-2.5 rounded-full bg-warning" />
-                            <span className="min-w-28 text-muted-foreground">Confidence</span>
-                            <span className="font-semibold">
-                              {latestAnalysis ? `${((latestAnalysis.risk.confidence || 0) * 100).toFixed(0)}%` : "--"}
+                            <span className="size-2.5 rounded-full bg-indigo-500" />
+                            <span className="min-w-36 text-muted-foreground text-xs">Evidence Completeness</span>
+                            <span className="font-semibold text-xs">
+                              {latestAnalysis
+                                ? `${(((latestAnalysis.risk.evidence_completeness ?? latestAnalysis.risk.confidence) || 0) * 100).toFixed(0)}%`
+                                : "--"}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <span className="size-2.5 rounded-full bg-amber-500" />
+                            <span className="min-w-36 text-muted-foreground text-xs">Risk Calibration</span>
+                            <span className="text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                              {latestAnalysis?.risk.is_calibrated ? "Calibrated" : "Not Calibrated (Deterministic)"}
                             </span>
                           </div>
                           <div className="flex items-center gap-3">
                             <span className="size-2.5 rounded-full bg-emerald-500" />
-                            <span className="min-w-28 text-muted-foreground">Health Score</span>
-                            <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                            <span className="min-w-36 text-muted-foreground text-xs">Health Score</span>
+                            <span className="font-semibold text-emerald-600 dark:text-emerald-400 text-xs">
                               {healthMetrics?.health_score !== undefined ? `${healthMetrics.health_score} / 100` : "N/A"}
                             </span>
                           </div>
@@ -700,142 +713,131 @@ export function Dashboard() {
                         </div>
                       </div>
 
-                      {/* Widget 3: Potential Test Gaps */}
+                      {/* Widget 3: Dead Code / Orphan Modules */}
                       <div className="rounded-md border border-border bg-background p-4">
-                        <div className="text-xs text-muted-foreground">Potential Test Gaps</div>
+                        <div className="text-xs text-muted-foreground">Dead Code & Orphans</div>
                         <div className="mt-2 text-2xl font-semibold text-rose-600 dark:text-rose-400">
-                          {healthMetrics ? (healthMetrics.potential_test_gaps?.length ?? healthMetrics.test_coverage_gaps?.length ?? 0) : "--"}
+                          {healthMetrics ? ((healthMetrics.dead_code_symbols?.length || 0) + (healthMetrics.orphan_modules?.length || 0)) : "--"}
                         </div>
-                        <div className="mt-1 text-xs text-muted-foreground">Source modules lacking tests</div>
+                        <div className="mt-1 text-xs text-muted-foreground">Unreferenced symbols & files</div>
                         <div className="mt-4 text-[10px] text-muted-foreground truncate">
                           {healthMetrics
-                            ? (healthMetrics.potential_test_gaps || healthMetrics.test_coverage_gaps || []).length
-                              ? `Gap: ${(healthMetrics.potential_test_gaps || healthMetrics.test_coverage_gaps || [])[0]}`
-                              : "No test gaps detected"
+                            ? `${healthMetrics.orphan_modules?.length || 0} orphan module(s), ${healthMetrics.dead_code_symbols?.length || 0} dead symbol(s)`
                             : "Connect a repository"}
                         </div>
                       </div>
 
-                      {/* Widget 4: Architectural Violations */}
+                      {/* Widget 4: Blast Radius & Impacted Modules */}
                       <div className="rounded-md border border-border bg-background p-4">
-                        <div className="text-xs text-muted-foreground">Layering Violations</div>
-                        <div className="mt-2 text-2xl font-semibold text-indigo-600 dark:text-indigo-400">
-                          {healthMetrics ? healthMetrics.architectural_violations.length : "--"}
+                        <div className="text-xs text-muted-foreground">Impacted Components</div>
+                        <div className="mt-2 text-2xl font-semibold text-primary">
+                          {latestAnalysis ? latestAnalysis.impacted_modules.length : "--"}
                         </div>
-                        <div className="mt-1 text-xs text-muted-foreground">Cross-layer policy breaches</div>
+                        <div className="mt-1 text-xs text-muted-foreground">Distinct graph modules affected</div>
                         <div className="mt-4 text-[10px] text-muted-foreground truncate">
-                          {healthMetrics
-                            ? healthMetrics.architectural_violations.length
-                              ? healthMetrics.architectural_violations[0].rule
-                              : "No policy violations"
-                            : "Connect a repository"}
+                          {latestAnalysis && latestAnalysis.impacted_modules.length > 0
+                            ? latestAnalysis.impacted_modules.slice(0, 3).join(", ")
+                            : "No recent analysis"}
                         </div>
                       </div>
                     </div>
                   </CardContent>
                 </Card>
 
-                {/* Additional Enterprise Analytics Widgets */}
-                {healthMetrics && (
-                  <div className="xl:col-span-2 grid gap-4 lg:grid-cols-3">
-                    {/* Widget 5: Highest Fan-Out Files (High Coupling) */}
-                    <Card>
-                      <CardHeader className="py-3">
-                        <CardTitle className="text-sm">Highest Fan-Out Files (Tight Coupling)</CardTitle>
-                      </CardHeader>
-                      <CardContent className="py-2">
-                        {healthMetrics.high_fan_out_files && healthMetrics.high_fan_out_files.length > 0 ? (
-                          <div className="space-y-2">
-                            {healthMetrics.high_fan_out_files.slice(0, 5).map((f, idx) => (
-                              <div key={idx} className="flex items-center justify-between text-xs font-mono p-1.5 rounded border bg-muted/20">
-                                <span className="truncate max-w-[200px]" title={f.path}>{f.path}</span>
-                                <Badge variant="secondary">{f.count} imports</Badge>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="py-4 text-center text-xs text-muted-foreground">No high fan-out files detected.</div>
-                        )}
-                      </CardContent>
-                    </Card>
-
-                    {/* Widget 6: Most Imported Files (Highest Fan-In / Centrality) */}
-                    <Card>
-                      <CardHeader className="py-3">
-                        <CardTitle className="text-sm">Most Imported Files (High Centrality)</CardTitle>
-                      </CardHeader>
-                      <CardContent className="py-2">
-                        {healthMetrics.high_fan_in_files && healthMetrics.high_fan_in_files.length > 0 ? (
-                          <div className="space-y-2">
-                            {healthMetrics.high_fan_in_files.slice(0, 5).map((f, idx) => (
-                              <div key={idx} className="flex items-center justify-between text-xs font-mono p-1.5 rounded border bg-muted/20">
-                                <span className="truncate max-w-[200px]" title={f.path}>{f.path}</span>
-                                <Badge variant="outline">{f.count} dependents</Badge>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="py-4 text-center text-xs text-muted-foreground">No high fan-in files detected.</div>
-                        )}
-                      </CardContent>
-                    </Card>
-
-                    {/* Widget 7: God Classes & Dead Code Candidates */}
-                    <Card>
-                      <CardHeader className="py-3">
-                        <CardTitle className="text-sm">God Classes & Unused Exports</CardTitle>
-                      </CardHeader>
-                      <CardContent className="py-2">
-                        <div className="space-y-2 text-xs">
-                          <div>
-                            <span className="font-medium text-muted-foreground">God Classes ({healthMetrics.god_classes?.length || 0}):</span>
-                            <div className="font-mono text-[11px] truncate text-amber-600 mt-0.5">
-                              {healthMetrics.god_classes?.[0] || "None detected"}
-                            </div>
-                          </div>
-                          <div>
-                            <span className="font-medium text-muted-foreground">Dead Code Candidates ({healthMetrics.dead_code_symbols?.length || 0}):</span>
-                            <div className="font-mono text-[11px] truncate text-muted-foreground mt-0.5">
-                              {healthMetrics.dead_code_symbols?.[0] || "None detected"}
-                            </div>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </div>
-                )}
-
+                {/* PR Changes & Pull Request Simulation */}
                 <Card>
                   <CardHeader>
-                    <CardTitle>Recent Repository Analyses</CardTitle>
+                    <div>
+                      <CardTitle>Change Impact Simulation</CardTitle>
+                      <CardDescription>Simulate PR branch diffs against current Knowledge Graph.</CardDescription>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground">Base Branch / Ref</label>
+                        <select
+                          value={simBaseBranch}
+                          onChange={(e) => setSimBaseBranch(e.target.value)}
+                          className="mt-1 flex h-9 w-full rounded-md border border-border bg-background px-3 text-xs"
+                        >
+                          <option value="main">main</option>
+                          <option value="master">master</option>
+                          <option value="develop">develop</option>
+                          {branches.map((b) => (
+                            <option key={b.name} value={b.name}>{b.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground">Head Branch / Ref</label>
+                        <select
+                          value={simHeadBranch}
+                          onChange={(e) => setSimHeadBranch(e.target.value)}
+                          className="mt-1 flex h-9 w-full rounded-md border border-border bg-background px-3 text-xs"
+                        >
+                          {branches.length > 0 ? (
+                            branches.map((b) => (
+                              <option key={b.name} value={b.name}>{b.name}</option>
+                            ))
+                          ) : (
+                            <option value="feature/refactor">feature/refactor</option>
+                          )}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        onClick={handleSimulatePr}
+                        disabled={simulatingPr || !activeRepoId}
+                        className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
+                      >
+                        <GitCompare className="size-3.5 mr-1.5" />
+                        {simulatingPr ? "Simulating Diff..." : "Simulate Branch Impact"}
+                      </Button>
+                    </div>
+
+                    {simulateError && (
+                      <div className="rounded-md border border-destructive/20 bg-destructive/10 p-2 text-xs text-destructive">
+                        {simulateError}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Analysis History Mini Table */}
+                <Card>
+                  <CardHeader>
+                    <div>
+                      <CardTitle>Recent Analysis Runs</CardTitle>
+                      <CardDescription>Persistent commit comparison history.</CardDescription>
+                    </div>
                   </CardHeader>
                   <CardContent>
                     {analyses.length === 0 ? (
                       <div className="py-8 text-center text-xs text-muted-foreground">
-                        No analyses performed yet. Click <strong>Connect & Analyze Repo</strong> to analyze a repository.
+                        No analysis jobs completed yet. Click <strong>Scan Repository</strong> to trigger your first analysis.
                       </div>
                     ) : (
                       <div className="overflow-x-auto">
                         <Table>
                           <TableHeader>
                             <TableRow>
-                              <TableHead>Commit SHA</TableHead>
-                              <TableHead>Risk Score</TableHead>
+                              <TableHead>Analysis ID</TableHead>
+                              <TableHead>Trigger</TableHead>
+                              <TableHead>Score</TableHead>
                               <TableHead>Level</TableHead>
                               <TableHead>Impacted Modules</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {analyses.map((anl) => (
-                              <TableRow
-                                key={anl.id}
-                                onClick={() => setSelectedAnalysisId(anl.id)}
-                                className={`cursor-pointer transition-colors ${
-                                  latestAnalysis?.id === anl.id ? "bg-muted/80 font-medium" : "hover:bg-muted/40"
-                                }`}
-                              >
-                                <TableCell className="font-mono text-xs font-medium">{anl.id}</TableCell>
-                                <TableCell className="font-semibold">{anl.risk.score.toFixed(2)}</TableCell>
+                            {analyses.slice(0, 5).map((anl) => (
+                              <TableRow key={anl.id}>
+                                <TableCell className="font-mono text-xs font-semibold text-primary">{anl.id}</TableCell>
+                                <TableCell className="text-xs">{anl.trigger}</TableCell>
+                                <TableCell className="font-bold text-xs">{anl.risk.score}/100</TableCell>
                                 <TableCell>
                                   <Badge variant={levelVariant(anl.risk.level)}>{anl.risk.level}</Badge>
                                 </TableCell>
@@ -867,11 +869,14 @@ export function Dashboard() {
                   </CardContent>
                 </Card>
 
+                {/* AI Report & Traceable Evidence Breakdown Card */}
                 <Card className="xl:col-span-2">
                   <CardHeader className="flex flex-row items-center justify-between">
                     <div>
-                      <CardTitle>AI Report & Evidence Breakdown</CardTitle>
-                      <CardDescription>Asynchronously generated AI summary grounded in real AST signals.</CardDescription>
+                      <CardTitle>Change Risk Assessment & Traceable Evidence</CardTitle>
+                      <CardDescription>
+                        Epistemologically separated FACTS, INFERENCES, and RECOMMENDATIONS grounded in repository evidence.
+                      </CardDescription>
                     </div>
                     {latestAnalysis?.ai_report && (
                       <Button variant="outline" size="sm" onClick={handleCopyReport} className="flex items-center gap-1.5">
@@ -882,23 +887,132 @@ export function Dashboard() {
                   </CardHeader>
                   <CardContent>
                     {latestAnalysis ? (
-                      <div className="space-y-4">
-                        <div className="rounded-md border border-border bg-muted/20 p-4 text-xs whitespace-pre-wrap font-mono">
+                      <div className="space-y-6">
+                        {/* Section 1: AI Generated Markdown Report */}
+                        <div className="rounded-md border border-border bg-muted/20 p-5 text-xs whitespace-pre-wrap font-mono leading-relaxed overflow-x-auto">
                           {latestAnalysis.ai_report || "AI report is generating in background..."}
                         </div>
 
-                        <div className="mt-4">
-                          <h4 className="text-sm font-semibold mb-2">Deterministic Evidence Rules Triggered</h4>
+                        {/* Section 2: Interactive Risk Breakdown Table */}
+                        {latestAnalysis.risk.risk_breakdown && latestAnalysis.risk.risk_breakdown.length > 0 && (
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <h4 className="text-sm font-semibold">Risk Breakdown (Score: {latestAnalysis.risk.score}/100)</h4>
+                              <span className="text-xs text-muted-foreground">Click any rule to inspect evidence & recommendation</span>
+                            </div>
+                            <div className="overflow-x-auto rounded-md border border-border">
+                              <Table>
+                                <TableHeader>
+                                  <TableRow>
+                                    <TableHead>Rule</TableHead>
+                                    <TableHead>Category</TableHead>
+                                    <TableHead className="text-center">Points</TableHead>
+                                    <TableHead>Evidence</TableHead>
+                                    <TableHead>Affected Files</TableHead>
+                                    <TableHead>Recommendation Type</TableHead>
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {latestAnalysis.risk.risk_breakdown.map((item, idx) => (
+                                    <TableRow
+                                      key={idx}
+                                      onClick={() => setSelectedRuleModal(item)}
+                                      className="cursor-pointer hover:bg-muted/50"
+                                    >
+                                      <TableCell className="font-semibold text-xs text-primary">{item.rule}</TableCell>
+                                      <TableCell className="text-xs">{item.category}</TableCell>
+                                      <TableCell className="text-center font-bold text-xs text-amber-600 dark:text-amber-400">
+                                        +{item.points}
+                                      </TableCell>
+                                      <TableCell className="text-xs max-w-xs truncate">{item.evidence}</TableCell>
+                                      <TableCell className="text-xs font-mono text-muted-foreground">
+                                        {item.affected_files && item.affected_files.length > 0
+                                          ? `${item.affected_files.length} file(s)`
+                                          : "N/A"}
+                                      </TableCell>
+                                      <TableCell className="text-xs">
+                                        <Badge variant="outline" className="text-[10px]">
+                                          {item.recommendation_type || "POLICY_BASED"}
+                                        </Badge>
+                                      </TableCell>
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Section 3: Traceable Statements Explorer */}
+                        <div>
+                          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                            <h4 className="text-sm font-semibold">Structured Evidence Statements</h4>
+                            <div className="flex items-center gap-1.5">
+                              {(["ALL", "FACT", "INFERENCE", "RECOMMENDATION"] as const).map((filter) => (
+                                <button
+                                  key={filter}
+                                  onClick={() => setEvidenceFilter(filter)}
+                                  className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                                    evidenceFilter === filter
+                                      ? "bg-primary text-primary-foreground font-semibold"
+                                      : "bg-muted/50 text-muted-foreground hover:bg-muted"
+                                  }`}
+                                >
+                                  {filter}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
                           <div className="space-y-2">
-                            {latestAnalysis.risk.evidence.map((ev, idx) => (
-                              <div key={idx} className="flex items-center justify-between rounded-md border border-border bg-background p-3 text-xs">
-                                <div>
-                                  <span className="font-semibold text-primary">{ev.signal}</span>
-                                  <p className="text-muted-foreground mt-0.5">{ev.description}</p>
+                            {(latestAnalysis.risk.statements || []).length > 0 ? (
+                              latestAnalysis.risk.statements
+                                ?.filter((stmt) => evidenceFilter === "ALL" || stmt.statement_type === evidenceFilter)
+                                .map((stmt) => (
+                                  <div
+                                    key={stmt.id}
+                                    className="flex items-start justify-between gap-3 rounded-md border border-border bg-background p-3 text-xs"
+                                  >
+                                    <div className="space-y-1">
+                                      <div className="flex items-center gap-2">
+                                        <Badge
+                                          variant="outline"
+                                          className={
+                                            stmt.statement_type === "FACT"
+                                              ? "border-sky-500 text-sky-400 bg-sky-500/10"
+                                              : stmt.statement_type === "INFERENCE"
+                                              ? "border-amber-500 text-amber-400 bg-amber-500/10"
+                                              : "border-emerald-500 text-emerald-400 bg-emerald-500/10"
+                                          }
+                                        >
+                                          {stmt.id} · {stmt.statement_type}
+                                        </Badge>
+                                        {stmt.recommendation_type && (
+                                          <span className="text-[10px] text-muted-foreground">
+                                            [{stmt.recommendation_type}]
+                                          </span>
+                                        )}
+                                      </div>
+                                      <p className="font-medium text-foreground">{stmt.claim}</p>
+                                      {stmt.source_evidence && (
+                                        <p className="text-[11px] text-muted-foreground">
+                                          Evidence: {stmt.source_evidence}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </div>
+                                ))
+                            ) : (
+                              latestAnalysis.risk.evidence.map((ev, idx) => (
+                                <div key={idx} className="flex items-center justify-between rounded-md border border-border bg-background p-3 text-xs">
+                                  <div>
+                                    <span className="font-semibold text-primary">{ev.signal}</span>
+                                    <p className="text-muted-foreground mt-0.5">{ev.description}</p>
+                                  </div>
+                                  <Badge variant="outline">Weight: {ev.weight}</Badge>
                                 </div>
-                                <Badge variant="outline">Weight: {ev.weight}</Badge>
-                              </div>
-                            ))}
+                              ))
+                            )}
                           </div>
                         </div>
                       </div>
@@ -1834,6 +1948,69 @@ export function Dashboard() {
           setActiveRepoId(repoId);
         }}
       />
+
+      {/* Traceable Rule Evidence Inspector Modal */}
+      {selectedRuleModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4"
+          onClick={() => setSelectedRuleModal(null)}
+        >
+          <div
+            className="w-full max-w-lg rounded-xl border border-border bg-background p-6 shadow-2xl space-y-4 text-xs"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b pb-3">
+              <div>
+                <h3 className="text-base font-semibold text-primary">{selectedRuleModal.rule}</h3>
+                <span className="text-muted-foreground uppercase text-[10px] tracking-wider">
+                  Category: {selectedRuleModal.category} • Points: +{selectedRuleModal.points}
+                </span>
+              </div>
+              <Button size="icon" variant="ghost" onClick={() => setSelectedRuleModal(null)}>
+                <X className="size-4" />
+              </Button>
+            </div>
+
+            <div>
+              <label className="font-semibold text-muted-foreground">Deterministic Evidence:</label>
+              <p className="mt-1 p-2.5 rounded-md border bg-muted/20 font-mono text-xs">
+                {selectedRuleModal.evidence}
+              </p>
+            </div>
+
+            {selectedRuleModal.threshold && (
+              <div>
+                <label className="font-semibold text-muted-foreground">Threshold Trigger:</label>
+                <p className="mt-0.5 font-medium">{selectedRuleModal.threshold}</p>
+              </div>
+            )}
+
+            <div>
+              <label className="font-semibold text-muted-foreground">Recommended Action:</label>
+              <p className="mt-1 p-2.5 rounded-md border border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
+                {selectedRuleModal.recommendation || "Validate and run tests before deployment."}
+              </p>
+            </div>
+
+            {selectedRuleModal.affected_files && selectedRuleModal.affected_files.length > 0 && (
+              <div>
+                <label className="font-semibold text-muted-foreground">Affected Files ({selectedRuleModal.affected_files.length}):</label>
+                <div className="mt-1 max-h-36 overflow-y-auto space-y-1 font-mono text-[11px] p-2 rounded border bg-muted/10">
+                  {selectedRuleModal.affected_files.map((file: string, idx: number) => (
+                    <div key={idx} className="truncate text-foreground">• {file}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end pt-2">
+              <Button size="sm" variant="outline" onClick={() => setSelectedRuleModal(null)}>
+                Close Inspector
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

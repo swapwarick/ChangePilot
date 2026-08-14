@@ -43,3 +43,21 @@ class AnalysisTrigger(StrEnum):
     PULL_REQUEST = "pull_request"
     ZIP_UPLOAD = "zip_upload"
 
+
+class StatementType(StrEnum):
+    FACT = "FACT"
+    INFERENCE = "INFERENCE"
+    RECOMMENDATION = "RECOMMENDATION"
+
+
+class RecommendationType(StrEnum):
+    EVIDENCE_BACKED = "EVIDENCE_BACKED"
+    POLICY_BASED = "POLICY_BASED"
+    GENERIC_BEST_PRACTICE = "GENERIC_BEST_PRACTICE"
+
+
+class CalibrationStatus(StrEnum):
+    NOT_CALIBRATED = "NOT_CALIBRATED"
+    PRELIMINARY = "PRELIMINARY"
+    CALIBRATED = "CALIBRATED"
+

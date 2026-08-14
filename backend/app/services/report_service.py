@@ -16,6 +16,12 @@ class AIReportService:
         self._prompt_manager = prompt_manager or PromptManager(DEFAULT_PROMPTS)
 
     async def generate_report(self, analysis: ChangeAnalysisResult) -> str:
+        facts_data = [stmt.model_dump() for stmt in analysis.risk.facts]
+        inferences_data = [stmt.model_dump() for stmt in analysis.risk.inferences]
+        recommendations_data = [stmt.model_dump() for stmt in analysis.risk.recommendations]
+        review_areas_data = analysis.risk.recommended_review_areas
+        deployment_evidence_data = analysis.risk.deployment_considerations
+
         prompt = self._prompt_manager.render(
             "risk_report",
             {
@@ -28,6 +34,11 @@ class AIReportService:
                     },
                     indent=2,
                 ),
+                "facts_json": json.dumps(facts_data, indent=2),
+                "inferences_json": json.dumps(inferences_data, indent=2),
+                "recommendations_json": json.dumps(recommendations_data, indent=2),
+                "review_areas_json": json.dumps(review_areas_data, indent=2),
+                "deployment_evidence_json": json.dumps(deployment_evidence_data, indent=2),
             },
         )
         response = await self._provider_registry.generate_with_fallback(
@@ -37,9 +48,11 @@ class AIReportService:
                     AIMessage(
                         role="system",
                         content=(
-                            "Explain deterministic evidence strictly based on stored AST evidence. "
-                            "Never invent unreferenced files, false dependencies, or unproven test coverage gaps. "
-                            "Never recalculate or override risk or health scores."
+                            "You are a Principal Software Architect synthesizing a scientifically defensible change risk assessment. "
+                            "Ground all statements strictly in the supplied structured evidence. "
+                            "Never invent unreferenced files, false dependencies, or speculative facts. "
+                            "Never call files, folders, or modules 'services'. "
+                            "Never recalculate or override risk scores or evidence completeness metrics."
                         ),
                     ),
                     AIMessage(role="user", content=prompt),

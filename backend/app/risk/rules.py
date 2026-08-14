@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
+from app.models.enums import RecommendationType
+
 
 @dataclass(frozen=True)
 class RiskRule:
@@ -10,6 +12,7 @@ class RiskRule:
     description: str
     weight: float
     recommendation: str
+    recommendation_type: RecommendationType = RecommendationType.POLICY_BASED
     threshold: str = "1 file"
     path_markers: tuple[str, ...] = ()
     extensions: tuple[str, ...] = ()
@@ -33,6 +36,7 @@ RULES: tuple[RiskRule, ...] = (
         description="Authentication and session management logic was modified.",
         weight=0.22,
         recommendation="Run authentication regression tests and request security review.",
+        recommendation_type=RecommendationType.POLICY_BASED,
         threshold="1 file",
         path_markers=("auth", "session", "login", "oauth", "jwt", "better-auth"),
     ),
@@ -43,6 +47,7 @@ RULES: tuple[RiskRule, ...] = (
         description="Role-based access control or permission enforcement changed.",
         weight=0.20,
         recommendation="Verify permission checks across affected API endpoints.",
+        recommendation_type=RecommendationType.POLICY_BASED,
         threshold="1 file",
         path_markers=("permission", "rbac", "acl", "policy", "authorize"),
     ),
@@ -53,6 +58,7 @@ RULES: tuple[RiskRule, ...] = (
         description="Secrets, credential templates, or key stores were edited.",
         weight=0.25,
         recommendation="Audit secret storage for cleartext leaks and rotate compromised tokens.",
+        recommendation_type=RecommendationType.POLICY_BASED,
         threshold="1 file",
         path_markers=("secret", "credential", "private_key", "pem", "keystore"),
         file_names=(".env", ".env.local", "secrets.yaml"),
@@ -66,6 +72,7 @@ RULES: tuple[RiskRule, ...] = (
         description="ORM models, SQL schemas, or database tables were altered.",
         weight=0.20,
         recommendation="Verify backward compatibility and check for destructive column drops.",
+        recommendation_type=RecommendationType.EVIDENCE_BACKED,
         threshold="1 file",
         path_markers=("schema", "database", "prisma", "models/"),
         extensions=(".sql",),
@@ -77,6 +84,7 @@ RULES: tuple[RiskRule, ...] = (
         description="Database migration scripts were added or modified.",
         weight=0.18,
         recommendation="Test forward and backward migration scripts on staging before deployment.",
+        recommendation_type=RecommendationType.EVIDENCE_BACKED,
         threshold="1 file",
         path_markers=("alembic", "migration", "migrations/"),
         extensions=(".py", ".sql"),
@@ -88,6 +96,7 @@ RULES: tuple[RiskRule, ...] = (
         description="Destructive table or column changes detected without rollback safety.",
         weight=0.18,
         recommendation="Ensure migration scripts include down_revision rollback steps.",
+        recommendation_type=RecommendationType.EVIDENCE_BACKED,
         threshold="1 file",
         path_markers=("drop_column", "drop_table", "truncate"),
     ),
@@ -100,6 +109,7 @@ RULES: tuple[RiskRule, ...] = (
         description="API route definitions, schemas, or OpenAPI specifications changed.",
         weight=0.16,
         recommendation="Ensure frontend client SDKs and public API consumers remain compatible.",
+        recommendation_type=RecommendationType.EVIDENCE_BACKED,
         threshold="1 file",
         path_markers=("api/", "routes/", "openapi", "graphql", "proto/"),
     ),
@@ -110,6 +120,7 @@ RULES: tuple[RiskRule, ...] = (
         description="Public API endpoints or handler routes were removed.",
         weight=0.22,
         recommendation="Check API gateway routes and notify external API consumers.",
+        recommendation_type=RecommendationType.EVIDENCE_BACKED,
         threshold="1 file",
         path_markers=("router.delete", "delete_endpoint", "api/"),
     ),
@@ -122,6 +133,7 @@ RULES: tuple[RiskRule, ...] = (
         description="Container build steps or runtime base image changed.",
         weight=0.14,
         recommendation="Rebuild container image locally and verify container startup health.",
+        recommendation_type=RecommendationType.EVIDENCE_BACKED,
         threshold="1 file",
         path_markers=("dockerfile", "docker-compose"),
         file_names=("dockerfile", "docker-compose.yml", "docker-compose.yaml"),
@@ -133,6 +145,7 @@ RULES: tuple[RiskRule, ...] = (
         description="GitHub Actions or CI pipeline workflow files modified.",
         weight=0.14,
         recommendation="Test pipeline execution on a pull request branch before merging.",
+        recommendation_type=RecommendationType.EVIDENCE_BACKED,
         threshold="1 file",
         path_markers=(".github/workflows", "ci.yml", "pipeline"),
     ),
@@ -143,6 +156,7 @@ RULES: tuple[RiskRule, ...] = (
         description="Infrastructure as Code Terraform manifests modified.",
         weight=0.18,
         recommendation="Execute `terraform plan` to verify cloud resource modifications.",
+        recommendation_type=RecommendationType.EVIDENCE_BACKED,
         threshold="1 file",
         path_markers=("terraform", "main.tf", "variables.tf"),
         extensions=(".tf",),
@@ -154,6 +168,7 @@ RULES: tuple[RiskRule, ...] = (
         description="K8s deployment, service, or ingress manifests modified.",
         weight=0.16,
         recommendation="Run `kubectl diff` against staging cluster before applying.",
+        recommendation_type=RecommendationType.EVIDENCE_BACKED,
         threshold="1 file",
         path_markers=("k8s/", "kubernetes", "helm", "deployment.yaml"),
     ),
@@ -164,6 +179,7 @@ RULES: tuple[RiskRule, ...] = (
         description="Environment variable configuration or settings files modified.",
         weight=0.12,
         recommendation="Update environment configuration across deployment environments.",
+        recommendation_type=RecommendationType.POLICY_BASED,
         threshold="1 file",
         path_markers=(".env", "config.py", "settings.py", "env.example"),
     ),
@@ -176,6 +192,7 @@ RULES: tuple[RiskRule, ...] = (
         description="Shared core library or utility module modified.",
         weight=0.16,
         recommendation="Run full repository unit test suite across all dependent modules.",
+        recommendation_type=RecommendationType.EVIDENCE_BACKED,
         threshold="1 file",
         path_markers=("shared/", "common/", "core/", "utils/", "lib/"),
     ),
@@ -186,16 +203,18 @@ RULES: tuple[RiskRule, ...] = (
         description="Package manager dependency files modified.",
         weight=0.14,
         recommendation="Audit updated dependencies for breaking changes and vulnerability advisories.",
+        recommendation_type=RecommendationType.POLICY_BASED,
         threshold="1 file",
         file_names=("package.json", "package-lock.json", "pyproject.toml", "requirements.txt"),
     ),
     RiskRule(
-        signal="critical_service_modified",
-        name="Critical Business Service Modified",
+        signal="critical_component_modified",
+        name="Critical Business Component Modified",
         category="architecture",
-        description="Core payment, billing, or domain service modified.",
+        description="Core payment, billing, or critical domain component modified.",
         weight=0.20,
         recommendation="Run end-to-end integration tests for critical business workflows.",
+        recommendation_type=RecommendationType.POLICY_BASED,
         threshold="1 file",
         path_markers=("payment", "billing", "order", "user_service"),
     ),
@@ -206,6 +225,7 @@ RULES: tuple[RiskRule, ...] = (
         description="Exported class or function modified with downstream consumer usage.",
         weight=0.18,
         recommendation="Check call sites across all importing files for parameter mismatches.",
+        recommendation_type=RecommendationType.EVIDENCE_BACKED,
         threshold="1 interface",
     ),
     RiskRule(
@@ -215,6 +235,7 @@ RULES: tuple[RiskRule, ...] = (
         description="Modified files participate in a circular module import loop.",
         weight=0.18,
         recommendation="Refactor circular imports into a separate shared interface or utility.",
+        recommendation_type=RecommendationType.EVIDENCE_BACKED,
         threshold="1 cycle",
     ),
     RiskRule(
@@ -224,6 +245,7 @@ RULES: tuple[RiskRule, ...] = (
         description="Changed file imports more than 10 downstream modules.",
         weight=0.14,
         recommendation="Apply dependency inversion to decouple high fan-out module.",
+        recommendation_type=RecommendationType.POLICY_BASED,
         threshold="> 10 imports",
     ),
     RiskRule(
@@ -233,6 +255,7 @@ RULES: tuple[RiskRule, ...] = (
         description="Changed file is imported by more than 8 downstream modules.",
         weight=0.18,
         recommendation="Ensure thorough test coverage due to extensive downstream consumption.",
+        recommendation_type=RecommendationType.EVIDENCE_BACKED,
         threshold="> 8 dependents",
     ),
     RiskRule(
@@ -242,6 +265,7 @@ RULES: tuple[RiskRule, ...] = (
         description="Change set touches >= 15 files qualifying as a large refactor.",
         weight=0.16,
         recommendation="Break pull request into smaller, isolated sub-PRs for safer review.",
+        recommendation_type=RecommendationType.GENERIC_BEST_PRACTICE,
         threshold=">= 15 files",
     ),
     RiskRule(
@@ -250,16 +274,18 @@ RULES: tuple[RiskRule, ...] = (
         category="architecture",
         description="Transitive impact spans more than 20 downstream files.",
         weight=0.20,
-        recommendation="Deploy change behind a feature flag and monitor staging logs.",
+        recommendation="Add integration tests for downstream components and validate on staging environment.",
+        recommendation_type=RecommendationType.EVIDENCE_BACKED,
         threshold="> 20 files",
     ),
     RiskRule(
-        signal="multi_service_affected",
-        name="Multiple Services Impacted",
+        signal="multi_module_impact",
+        name="Multiple Modules Impacted",
         category="architecture",
-        description="Change impact spans across 2 or more distinct service domains.",
+        description="Change impact spans across 2 or more distinct architectural modules.",
         weight=0.18,
-        recommendation="Coordinate deployment order across affected microservices.",
+        recommendation="These components share dependency relationships and should be tested together.",
+        recommendation_type=RecommendationType.EVIDENCE_BACKED,
         threshold="> 2 modules",
     ),
     RiskRule(
@@ -269,6 +295,7 @@ RULES: tuple[RiskRule, ...] = (
         description="Modified class contains an unusually high number of methods/responsibilities.",
         weight=0.14,
         recommendation="Break god class down using Single Responsibility Principle.",
+        recommendation_type=RecommendationType.POLICY_BASED,
         threshold=">= 8 methods",
     ),
 
@@ -280,6 +307,7 @@ RULES: tuple[RiskRule, ...] = (
         description="Production code was modified without any corresponding test changes.",
         weight=0.14,
         recommendation="Add unit tests covering modified business logic.",
+        recommendation_type=RecommendationType.EVIDENCE_BACKED,
         threshold="0 tests",
     ),
     RiskRule(
@@ -289,6 +317,7 @@ RULES: tuple[RiskRule, ...] = (
         description="Modified files belong to modules with identified test coverage gaps.",
         weight=0.12,
         recommendation="Write automated regression tests for untracked source modules.",
+        recommendation_type=RecommendationType.POLICY_BASED,
         threshold="0 test specs",
     ),
 )

@@ -130,20 +130,51 @@ export type DependencyGraph = {
   graph_health?: GraphHealth;
 };
 
+export type StatementType = "FACT" | "INFERENCE" | "RECOMMENDATION";
+export type RecommendationType = "EVIDENCE_BACKED" | "POLICY_BASED" | "GENERIC_BEST_PRACTICE";
+
+export type EvidenceStatement = {
+  id: string;
+  statement_type: StatementType;
+  claim: string;
+  source_evidence?: string;
+  recommendation_type?: RecommendationType;
+  traceability_ref?: string;
+  affected_files?: string[];
+};
+
 export type RiskBreakdownItem = {
   rule: string;
   category: string;
   points: number;
   evidence: string;
   affected_files: string[];
+  threshold?: string;
   recommendation: string;
+  recommendation_type?: RecommendationType;
 };
 
 export type RiskResult = {
   score: number;
   level: RiskLevel;
   confidence: number;
+  evidence_completeness?: number;
+  is_calibrated?: boolean;
+  calibration_status?: string;
+  score_description?: string;
   evidence: RiskEvidence[];
+  statements?: EvidenceStatement[];
+  facts?: EvidenceStatement[];
+  inferences?: EvidenceStatement[];
+  recommendations?: EvidenceStatement[];
+  potential_failure_scenarios?: string[];
+  recommended_review_areas?: Array<{
+    review_area: string;
+    suggested_reviewer?: string | null;
+    evidence?: string;
+    ownership_note?: string;
+  }>;
+  deployment_considerations?: string[];
   reasons: string[];
   risk_breakdown?: RiskBreakdownItem[];
   audit?: Record<string, number>;

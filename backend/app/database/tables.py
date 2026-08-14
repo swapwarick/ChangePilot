@@ -104,13 +104,24 @@ class AnalysisRow(Base):
     risk_reasons: Mapped[dict] = mapped_column(JSON, nullable=False, default=list)
     ai_report: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # Audit & Versioning Metadata
+    # Audit, Versioning & Calibration Metadata
     parser_version: Mapped[str] = mapped_column(String(30), default="1.0.0")
     graph_version: Mapped[str] = mapped_column(String(30), default="1.0.0")
     risk_engine_version: Mapped[str] = mapped_column(String(30), default="1.0.0")
+    risk_policy_version: Mapped[str] = mapped_column(String(30), default="1.0.0")
+    analysis_version: Mapped[str] = mapped_column(String(30), default="1.0.0")
     ai_prompt_version: Mapped[str] = mapped_column(String(30), default="1.0.0")
     ai_provider: Mapped[str | None] = mapped_column(String(120), nullable=True)
     ai_model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+
+    # Calibration Roadmap
+    is_calibrated: Mapped[bool] = mapped_column(Boolean, default=False)
+    calibration_status: Mapped[str] = mapped_column(String(255), default="NOT_CALIBRATED")
+    evidence_completeness: Mapped[float] = mapped_column(Float, default=1.0)
+    historical_outcome: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    production_incident: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    rollback_occurred: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    change_failed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     # Ownership
     user_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
