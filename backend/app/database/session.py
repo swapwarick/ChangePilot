@@ -40,13 +40,15 @@ async def _init_db_engine():
 
         # Attempt PostgreSQL connection
         try:
-            test_engine = create_async_engine(pg_url, echo=False, connect_args={"connect_timeout": 2})
+            test_engine = create_async_engine(pg_url, echo=False, connect_args={"connect_timeout": 5})
             async with test_engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
             await test_engine.dispose()
 
             logger.info("Connected to PostgreSQL database successfully.")
             _engine = create_async_engine(pg_url, echo=settings.app_env == "development")
+            async with _engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
             _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
             return _engine
         except Exception as exc:  # noqa: BLE001

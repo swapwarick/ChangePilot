@@ -18,5 +18,5 @@ RUN pip install --no-cache-dir .
 
 EXPOSE 8000
 
-# Run Alembic migrations then start the server
-CMD alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000
+# Run migrations and start server with dynamic PORT support for cloud providers
+CMD ["sh", "-c", "alembic upgrade head || true; exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
