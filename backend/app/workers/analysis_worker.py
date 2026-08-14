@@ -18,7 +18,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.analysis.tree_sitter_parser import ImportSymbol, ParsedFileAST, TreeSitterCodeParser
+from app.analysis.tree_sitter_parser import ImportSymbol, ParsedFileAST, TreeSitterCodeParser, is_generated_or_vendor
 from app.database.tables import AnalysisJobRow, AnalysisRow, FileASTCacheRow, RepoKnowledgeGraphRow
 from app.graph.knowledge_graph import KnowledgeGraphBuilder
 from app.graph.neo4j_engine import Neo4jGraphEngine
@@ -86,9 +86,9 @@ class AnalysisWorkerPipeline:
 
             async with self._session_factory() as session:
                 for file_path in worktree_dir.rglob("*"):
-                    if file_path.is_file() and not any(ignored in file_path.parts for ignored in (".git", "node_modules", ".next", "__pycache__", ".venv")):
+                    if file_path.is_file():
                         rel_path = file_path.relative_to(worktree_dir).as_posix()
-                        if self._parser.detect_language(rel_path):
+                        if not is_generated_or_vendor(rel_path) and self._parser.detect_language(rel_path):
                             try:
                                 content = file_path.read_bytes()
                                 file_hash = self._parser.compute_file_hash(content)
@@ -162,6 +162,9 @@ class AnalysisWorkerPipeline:
                 )
                 existing_kg = (await session.execute(existing_kg_stmt)).scalar_one_or_none()
 
+                orphan_list = getattr(health_metrics, "potential_orphan_candidates", getattr(health_metrics, "orphan_modules", []))
+                gap_list = getattr(health_metrics, "potential_test_gaps", getattr(health_metrics, "test_coverage_gaps", []))
+
                 health_dict = {
                     "health_score": health_metrics.health_score,
                     "total_files": health_metrics.total_files,
@@ -169,13 +172,16 @@ class AnalysisWorkerPipeline:
                     "total_functions": health_metrics.total_functions,
                     "total_dependencies": health_metrics.total_dependencies,
                     "circular_dependencies": health_metrics.circular_dependencies,
-                    "orphan_modules": health_metrics.orphan_modules,
+                    "orphan_modules": orphan_list,
+                    "potential_orphan_candidates": orphan_list,
                     "dead_code_symbols": health_metrics.dead_code_symbols,
                     "god_classes": health_metrics.god_classes,
                     "high_fan_out_files": health_metrics.high_fan_out_files,
                     "high_fan_in_files": health_metrics.high_fan_in_files,
-                    "test_coverage_gaps": health_metrics.test_coverage_gaps,
+                    "test_coverage_gaps": gap_list,
+                    "potential_test_gaps": gap_list,
                     "architectural_violations": health_metrics.architectural_violations,
+                    "coverage_notice": getattr(health_metrics, "coverage_notice", "Coverage data unavailable; test gap inferred from repository structure."),
                 }
 
                 if existing_kg:
@@ -260,8 +266,9 @@ class AnalysisWorkerPipeline:
                 if not ai_provider_registry:
                     async with self._session_factory() as session:
                         configs = await AIProviderConfigRepository(session).list_all()
-                        if configs:
-                            ai_provider_registry = AIProviderRegistry(configs=configs)
+                        enabled_configs = [c for c in configs if c.enabled]
+                        if enabled_configs:
+                            ai_provider_registry = AIProviderRegistry(configs=enabled_configs)
 
                 if ai_provider_registry:
                     report_service = AIReportService(provider_registry=ai_provider_registry)
@@ -271,8 +278,19 @@ class AnalysisWorkerPipeline:
                         if row:
                             row.ai_report = ai_report_text
                             await session.commit()
+                else:
+                    async with self._session_factory() as session:
+                        row = await session.get(AnalysisRow, analysis_id)
+                        if row:
+                            row.ai_report = self._build_fallback_report(analysis, "No active AI provider configured.")
+                            await session.commit()
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Async AI Report generation warning (non-fatal): %s", exc)
+                async with self._session_factory() as session:
+                    row = await session.get(AnalysisRow, analysis_id)
+                    if row:
+                        row.ai_report = self._build_fallback_report(analysis, f"LLM connection unavailable ({exc}).")
+                        await session.commit()
 
             await self.update_job(job_id, "COMPLETED", "Analysis Completed", 100, analysis_id=analysis_id)
 
@@ -282,3 +300,22 @@ class AnalysisWorkerPipeline:
         finally:
             # Clean up worktree
             await self._git_cli.cleanup_worktree(owner, repo_name, head_ref)
+
+    @staticmethod
+    def _build_fallback_report(analysis: ChangeAnalysisResult, reason: str) -> str:
+        level_str = str(analysis.risk.level.value if hasattr(analysis.risk.level, "value") else analysis.risk.level).upper()
+        lines = [
+            f"### Change Analysis Summary ({level_str} RISK)",
+            f"*{reason} Showing deterministic structural analysis.*",
+            "",
+            f"**Risk Score**: {analysis.risk.score:.2f} / 1.00 (Confidence: {int(analysis.risk.confidence * 100)}%)",
+            f"**Changed Files**: {len(analysis.changed_files)} file(s)",
+            f"**Impacted Modules**: {', '.join(analysis.impacted_modules) if analysis.impacted_modules else 'None'}",
+            "",
+            "#### Deterministic Risk Factors",
+        ]
+        for item in sorted(analysis.risk.evidence, key=lambda x: x.weight * x.score, reverse=True):
+            lines.append(f"- **{item.name or item.signal}** ({item.category.title()}): {item.description}")
+            if item.recommendation:
+                lines.append(f"  *Recommendation*: {item.recommendation}")
+        return "\n".join(lines)

@@ -23,6 +23,49 @@ class Base(DeclarativeBase):
     """Shared declarative base for all ORM models."""
 
 
+# ---------------------------------------------------------------------------
+# Auth tables
+# ---------------------------------------------------------------------------
+
+
+class UserRow(Base):
+    """Application user — both registered and guest accounts."""
+
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    username: Mapped[str] = mapped_column(String(80), nullable=False, unique=True, index=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True, index=True)
+    hashed_password: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # "registered" users have persistent 30 MB storage; "guest" sessions are ephemeral
+    tier: Mapped[str] = mapped_column(String(20), nullable=False, default="guest")
+    storage_used_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    storage_quota_bytes: Mapped[int] = mapped_column(Integer, default=0)  # 0 = no persistent storage
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, server_default=func.now()
+    )
+
+
+class SessionRow(Base):
+    """JWT refresh-token sessions tracked server-side for revocation support."""
+
+    __tablename__ = "sessions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    refresh_token_hash: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, server_default=func.now())
+
+
+# ---------------------------------------------------------------------------
+# Repository & analysis tables
+# ---------------------------------------------------------------------------
+
+
 class RepositoryRow(Base):
     __tablename__ = "repositories"
 
@@ -34,6 +77,9 @@ class RepositoryRow(Base):
     url: Mapped[str | None] = mapped_column(Text, nullable=True)
     default_branch: Mapped[str] = mapped_column(String(120), server_default="main")
     language: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    # Ownership
+    user_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    is_ephemeral: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, server_default=func.now()
@@ -57,7 +103,7 @@ class AnalysisRow(Base):
     risk_evidence: Mapped[dict] = mapped_column(JSON, nullable=False, default=list)
     risk_reasons: Mapped[dict] = mapped_column(JSON, nullable=False, default=list)
     ai_report: Mapped[str | None] = mapped_column(Text, nullable=True)
-    
+
     # Audit & Versioning Metadata
     parser_version: Mapped[str] = mapped_column(String(30), default="1.0.0")
     graph_version: Mapped[str] = mapped_column(String(30), default="1.0.0")
@@ -65,6 +111,10 @@ class AnalysisRow(Base):
     ai_prompt_version: Mapped[str] = mapped_column(String(30), default="1.0.0")
     ai_provider: Mapped[str | None] = mapped_column(String(120), nullable=True)
     ai_model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+
+    # Ownership
+    user_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    is_ephemeral: Mapped[bool] = mapped_column(Boolean, default=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, server_default=func.now())
 
@@ -79,6 +129,9 @@ class AnalysisJobRow(Base):
     progress: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     analysis_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Ownership
+    user_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    is_ephemeral: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, server_default=func.now()
@@ -95,6 +148,9 @@ class RepoKnowledgeGraphRow(Base):
     nodes: Mapped[dict] = mapped_column(JSON, nullable=False, default=list)
     edges: Mapped[dict] = mapped_column(JSON, nullable=False, default=list)
     health_metrics: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    # Ownership
+    user_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    is_ephemeral: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, server_default=func.now())
 
 
@@ -126,8 +182,8 @@ class AIProviderConfigRow(Base):
     fallback_provider_ids: Mapped[dict] = mapped_column(JSON, nullable=False, default=list)
     custom_headers: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     temperature: Mapped[float] = mapped_column(Float, default=0.2)
-    max_tokens: Mapped[int] = mapped_column(Integer, default=1600)
-    timeout_seconds: Mapped[float] = mapped_column(Float, default=30)
+    max_tokens: Mapped[int] = mapped_column(Integer, default=4096)
+    timeout_seconds: Mapped[float] = mapped_column(Float, default=120)
     retry_max_attempts: Mapped[int] = mapped_column(Integer, default=2)
     retry_backoff: Mapped[float] = mapped_column(Float, default=0.5)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, server_default=func.now())
@@ -150,4 +206,3 @@ class RiskPolicyRow(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, server_default=func.now()
     )
-

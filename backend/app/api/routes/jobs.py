@@ -42,9 +42,10 @@ async def submit_analysis_job(
     payload: CreateAnalysisJobRequest,
     background_tasks: BackgroundTasks,
     db: DbSession,
-    token: str = Header(..., alias="Authorization"),
+    token: str | None = Header(None, alias="Authorization"),
 ) -> AnalysisJobStatusResponse:
     repo_id = f"{payload.owner}-{payload.repo_name}".lower()
+    source_kind = "local" if payload.owner == "local" or not payload.repository_url.startswith(("http://", "https://")) else "github"
 
     # Ensure repository row exists in DB
     existing_repo = await db.get(RepositoryRow, repo_id)
@@ -54,7 +55,7 @@ async def submit_analysis_job(
             name=payload.repo_name,
             owner=payload.owner,
             full_name=f"{payload.owner}/{payload.repo_name}",
-            source="github",
+            source=source_kind,
             url=payload.repository_url,
             default_branch=payload.base_ref,
         )

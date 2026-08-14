@@ -22,7 +22,9 @@ class AIProviderConfig(BaseModel):
     fallback_provider_ids: list[str] = Field(default_factory=list)
     custom_headers: dict[str, str] = Field(default_factory=dict)
     temperature: float = Field(default=0.2, ge=0, le=2)
-    max_tokens: int = Field(default=1600, ge=1, le=200000)
+    top_p: float | None = Field(default=None, ge=0, le=1)
+    seed: int | None = Field(default=None)
+    max_tokens: int = Field(default=4096, ge=1, le=131072)
     timeout_seconds: float = Field(default=120, ge=1, le=600)
     retry_policy: RetryPolicy = Field(default_factory=RetryPolicy)
 
@@ -37,6 +39,8 @@ class AIRequest(BaseModel):
     messages: list[AIMessage]
     model: str | None = None
     temperature: float | None = None
+    top_p: float | None = None
+    seed: int | None = None
     max_tokens: int | None = None
 
 

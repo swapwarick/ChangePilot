@@ -18,7 +18,7 @@ def _make_result(analysis_id: str = "a-1", repository_id: str = "repo-1") -> Cha
         impacted_modules=["auth", "database"],
         dependency_graph=DependencyGraph(nodes=[], edges=[]),
         risk=RiskResult(
-            score=0.65,
+            score=65,
             level=RiskLevel.HIGH,
             confidence=0.85,
             evidence=[
@@ -42,7 +42,7 @@ async def test_save_and_get_analysis(async_session) -> None:
 
     saved = await repo.save(original)
     assert saved.id == "a-1"
-    assert saved.risk.score == 0.65
+    assert saved.risk.score == 65
     assert saved.risk.level == RiskLevel.HIGH
     assert len(saved.risk.evidence) == 1
 

@@ -20,6 +20,18 @@ class Settings(BaseSettings):
     neo4j_password: str = Field(default="changepilot-password", alias="NEO4J_PASSWORD")
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
 
+    # --- Auth ---------------------------------------------------------------
+    jwt_secret_key: str = Field(default="dev-insecure-secret-change-me", alias="JWT_SECRET_KEY")
+    jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
+    access_token_expire_minutes: int = Field(default=60, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
+    refresh_token_expire_days: int = Field(default=30, alias="REFRESH_TOKEN_EXPIRE_DAYS")
+
+    # --- Storage ------------------------------------------------------------
+    # Quota for registered users in bytes (default 30 MB)
+    storage_quota_bytes: int = Field(default=31_457_280, alias="STORAGE_QUOTA_BYTES")
+    # Set to true in cloud deployments to disable local filesystem browsing in the UI
+    is_cloud: bool = Field(default=False, alias="IS_CLOUD")
+
     @property
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.backend_cors_origins.split(",") if origin.strip()]
@@ -28,4 +40,3 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-

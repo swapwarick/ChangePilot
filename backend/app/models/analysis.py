@@ -22,4 +22,8 @@ class ChangeAnalysisResult(BaseModel):
     dependency_graph: DependencyGraph
     risk: RiskResult
     ai_report: str | None = None
+    parser_version: str = "1.0.0"
+    graph_version: str = "1.0.0"
+    risk_engine_version: str = "1.0.0"
+    analysis_timestamp: str | None = None
 

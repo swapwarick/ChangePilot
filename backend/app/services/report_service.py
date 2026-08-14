@@ -36,7 +36,11 @@ class AIReportService:
                 messages=[
                     AIMessage(
                         role="system",
-                        content="Explain deterministic evidence. Never recalculate or override scores.",
+                        content=(
+                            "Explain deterministic evidence strictly based on stored AST evidence. "
+                            "Never invent unreferenced files, false dependencies, or unproven test coverage gaps. "
+                            "Never recalculate or override risk or health scores."
+                        ),
                     ),
                     AIMessage(role="user", content=prompt),
                 ],

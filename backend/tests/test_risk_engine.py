@@ -30,6 +30,6 @@ def test_low_risk_documentation_change_stays_low() -> None:
     engine = DeterministicRiskEngine()
     result = engine.score(RiskInput(changed_files=["docs/readme.md"]))
 
-    assert result.score < 0.3
+    assert result.score < 30
     assert result.level == RiskLevel.LOW
 

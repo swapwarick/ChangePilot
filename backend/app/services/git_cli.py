@@ -29,11 +29,18 @@ logger = logging.getLogger(__name__)
 # subprocess call.
 _SAFE_GIT_REF = re.compile(r"^[A-Za-z0-9_.~^/@{}\-]+$")
 
+# The SHA of git's canonical empty tree — used as base when diffing a root commit.
+_EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
 
 def _validate_git_ref(ref: str, context: str = "git ref") -> str:
     """Return *ref* unchanged if it is safe; raise ValueError otherwise."""
-    if not ref or ".." in ref:
-        raise ValueError(f"Invalid {context}: empty or contains '..': {ref!r}")
+    if not ref:
+        raise ValueError(f"Invalid {context}: empty ref")
+    # Reject path-traversal sequences like ../../ but allow single .. in range refs
+    # (those are joined *outside* this function, so individual refs should not contain ..)
+    if ".." in ref:
+        raise ValueError(f"Invalid {context}: contains '..': {ref!r}")
     if not _SAFE_GIT_REF.match(ref):
         raise ValueError(
             f"Invalid {context} — contains disallowed characters: {ref!r}. "
@@ -149,10 +156,27 @@ class GitCLIManager:
         if target_dir.exists():
             logger.warning("Could not fully remove directory after 3 attempts: %s", target_dir)
 
+    @staticmethod
+    def _is_local_dir(clone_url: str) -> bool:
+        if not clone_url:
+            return False
+        try:
+            p = Path(clone_url.strip()).resolve()
+            return p.exists() and p.is_dir()
+        except Exception:
+            return False
+
     async def ensure_bare_repo(self, owner: str, repo: str, clone_url: str, token: str | None = None) -> Path:
         """Clones bare repo if not present, otherwise fetches latest changes with automatic recovery."""
+        if self._is_local_dir(clone_url):
+            local_path = Path(clone_url.strip()).resolve()
+            if not (local_path / ".git").exists():
+                return local_path
+            authed_url = str(local_path)
+        else:
+            authed_url = self._get_clone_url_with_token(clone_url, token)
+
         bare_repo_dir = self.repos_dir / owner / f"{repo}.git"
-        authed_url = self._get_clone_url_with_token(clone_url, token)
 
         if bare_repo_dir.exists():
             try:
@@ -181,6 +205,11 @@ class GitCLIManager:
 
     async def checkout_worktree(self, owner: str, repo: str, commit_sha: str, clone_url: str, token: str | None = None) -> Path:
         """Creates a zero-copy git worktree checkout for a specific commit SHA or branch."""
+        if self._is_local_dir(clone_url):
+            local_path = Path(clone_url.strip()).resolve()
+            if not (local_path / ".git").exists():
+                return local_path
+
         bare_repo_dir = await self.ensure_bare_repo(owner, repo, clone_url, token)
         worktree_dir = self.worktrees_dir / owner / repo / commit_sha[:12]
 
@@ -202,12 +231,77 @@ class GitCLIManager:
 
         return worktree_dir
 
+    async def _resolve_base_ref(self, bare_repo_dir: Path, base_ref: str, head_ref: str) -> str:
+        """Resolve base_ref to a concrete SHA, falling back to the empty-tree SHA
+        when base_ref points to a root commit that has no parent.
+
+        This handles the common ``sha~1`` pattern for initial commits and
+        shallow clones where the parent is not present in the local object store.
+        """
+        try:
+            # Attempt to resolve to a real SHA — will fail if ref is unreachable
+            return await self._run_git(bare_repo_dir, ["rev-parse", "--verify", base_ref])
+        except Exception:  # noqa: BLE001
+            pass
+
+        # If base_ref looks like `<sha>~N`, check whether head_ref itself is a
+        # root commit (i.e. has no parents).  If so, use the empty-tree SHA so
+        # the diff covers all files that were introduced in that first commit.
+        try:
+            parent_count_out = await self._run_git(
+                bare_repo_dir, ["rev-list", "--count", "--parents", head_ref, "--", "--max-count=1"]
+            )
+            # rev-list --parents prints: "<sha> [<parent-sha> ...]"
+            # A root commit line has no parent SHA after the commit SHA.
+            parts = parent_count_out.strip().split()
+            if len(parts) == 1:
+                # Root commit — no parent exists, diff against empty tree
+                logger.info(
+                    "Base ref %r is unreachable (root commit %s). Diffing against empty tree.",
+                    base_ref,
+                    head_ref,
+                )
+                return _EMPTY_TREE_SHA
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Last resort: raise a clear, human-readable error
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Cannot resolve base ref {base_ref!r}. "
+                "For the first commit in a repository, leave base_ref empty or pass the empty-tree "
+                f"SHA ({_EMPTY_TREE_SHA}). "
+                "For subsequent commits, pass a valid branch name, tag, or commit SHA."
+            ),
+        )
+
     async def get_commit_diff(
         self, owner: str, repo: str, base_ref: str, head_ref: str, clone_url: str, token: str | None = None
     ) -> GitDiffResult:
-        """Computes exact file diff between base_ref and head_ref using git diff --name-status."""
+        """Computes exact file diff between base_ref and head_ref using git diff --name-status.
+
+        Handles root commits gracefully: when *base_ref* (e.g. ``sha~1``) cannot be
+        resolved because the commit has no parent, the diff is computed against git's
+        canonical empty-tree SHA so all files in that commit are reported as *added*.
+        """
+        if self._is_local_dir(clone_url):
+            local_path = Path(clone_url.strip()).resolve()
+            if not (local_path / ".git").exists():
+                file_diffs: list[FileDiff] = []
+                changed_files: list[str] = []
+                ignored_dirs = {".git", "node_modules", ".next", "__pycache__", ".venv", "dist", "build"}
+                for p in local_path.rglob("*"):
+                    if p.is_file() and not any(part in ignored_dirs for part in p.parts):
+                        rel = p.relative_to(local_path).as_posix()
+                        file_diffs.append(FileDiff(filename=rel, status="added"))
+                        changed_files.append(rel)
+                return GitDiffResult(base_ref="empty", head_ref="HEAD", files=file_diffs, changed_files=changed_files)
+
         bare_repo_dir = await self.ensure_bare_repo(owner, repo, clone_url, token)
-        raw_diff = await self._run_git(bare_repo_dir, ["diff", "--name-status", f"{base_ref}..{head_ref}"])
+
+        resolved_base = await self._resolve_base_ref(bare_repo_dir, base_ref, head_ref)
+        raw_diff = await self._run_git(bare_repo_dir, ["diff", "--name-status", f"{resolved_base}..{head_ref}"])
 
         file_diffs: list[FileDiff] = []
         changed_files: list[str] = []
@@ -233,14 +327,14 @@ class GitCLIManager:
             file_diffs.append(FileDiff(filename=filename, status=status, previous_filename=prev_filename))
             changed_files.append(filename)
 
-        return GitDiffResult(base_ref=base_ref, head_ref=head_ref, files=file_diffs, changed_files=changed_files)
+        return GitDiffResult(base_ref=resolved_base, head_ref=head_ref, files=file_diffs, changed_files=changed_files)
 
     async def cleanup_worktree(self, owner: str, repo: str, commit_sha: str) -> None:
         """Removes a worktree directory."""
         bare_repo_dir = self.repos_dir / owner / f"{repo}.git"
         worktree_dir = self.worktrees_dir / owner / repo / commit_sha[:12]
 
-        if worktree_dir.exists():
+        if worktree_dir.exists() and worktree_dir.is_relative_to(self.worktrees_dir):
             if bare_repo_dir.exists():
                 try:
                     await self._run_git(bare_repo_dir, ["worktree", "remove", "-f", str(worktree_dir)])
@@ -286,8 +380,9 @@ class GitCLIManager:
         _validate_git_ref(head_ref, "head_ref")
 
         bare_repo_dir = await self.ensure_bare_repo(owner, repo, clone_url, token)
+        resolved_base = await self._resolve_base_ref(bare_repo_dir, base_ref, head_ref)
         return await self._run_git(
             bare_repo_dir,
-            ["diff", "--unified=0", f"{base_ref}..{head_ref}"],
+            ["diff", "--unified=0", f"{resolved_base}..{head_ref}"],
         )
 

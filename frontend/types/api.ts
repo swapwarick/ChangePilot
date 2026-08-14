@@ -87,12 +87,18 @@ export type RiskEvidence = {
   threshold?: string;
 };
 
-export type RiskResult = {
-  score: number;
-  level: RiskLevel;
-  confidence: number;
-  evidence: RiskEvidence[];
-  reasons: string[];
+
+
+export type GraphHealth = {
+  node_count: number;
+  edge_count: number;
+  self_edge_count: number;
+  duplicate_edge_count: number;
+  unresolved_imports: number;
+  circular_dependency_count: number;
+  orphan_candidates: number;
+  invalid_paths: number;
+  warnings: string[];
 };
 
 export type GraphNode = {
@@ -102,6 +108,7 @@ export type GraphNode = {
   path?: string;
   module?: string;
   language?: string;
+  file_classification?: string;
   fan_in?: number;
   fan_out?: number;
   blast_radius?: number;
@@ -114,11 +121,32 @@ export type GraphEdge = {
   source: string;
   target: string;
   relationship: string;
+  edge_type?: string;
 };
 
 export type DependencyGraph = {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  graph_health?: GraphHealth;
+};
+
+export type RiskBreakdownItem = {
+  rule: string;
+  category: string;
+  points: number;
+  evidence: string;
+  affected_files: string[];
+  recommendation: string;
+};
+
+export type RiskResult = {
+  score: number;
+  level: RiskLevel;
+  confidence: number;
+  evidence: RiskEvidence[];
+  reasons: string[];
+  risk_breakdown?: RiskBreakdownItem[];
+  audit?: Record<string, number>;
 };
 
 export type ChangeAnalysisResult = {
@@ -136,6 +164,14 @@ export type ChangeAnalysisResult = {
   created_at?: string;
 };
 
+export type HealthCategoryDetail = {
+  category: string;
+  score: number;
+  evidence: string[];
+  deductions: number;
+  recommendations: string[];
+};
+
 export type RepoHealthMetrics = {
   health_score?: number;
   total_files: number;
@@ -143,13 +179,17 @@ export type RepoHealthMetrics = {
   total_functions?: number;
   total_dependencies?: number;
   circular_dependencies: string[][];
-  orphan_modules: string[];
+  orphan_modules?: string[];
+  potential_orphan_candidates?: string[];
   dead_code_symbols?: string[];
   god_classes?: string[];
   high_fan_out_files?: Array<{ path: string; count: number }>;
   high_fan_in_files?: Array<{ path: string; count: number }>;
-  test_coverage_gaps: string[];
+  test_coverage_gaps?: string[];
+  potential_test_gaps?: string[];
   architectural_violations: Array<{ rule: string; source: string; target: string }>;
+  coverage_notice?: string;
+  categories?: Record<string, HealthCategoryDetail>;
 };
 
 export type RepoKnowledgeGraph = {
@@ -168,6 +208,7 @@ export type AIProviderConfig = {
   name: string;
   kind: string;
   base_url?: string;
+  api_key?: string;
   model: string;
   enabled: boolean;
   is_default: boolean;
@@ -176,6 +217,8 @@ export type AIProviderConfig = {
   fallback_provider_ids: string[];
   custom_headers: Record<string, string>;
   temperature: number;
+  top_p?: number;
+  seed?: number;
   max_tokens: number;
   timeout_seconds: number;
 };

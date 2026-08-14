@@ -1,12 +1,12 @@
 from collections import defaultdict
 
 from app.models.enums import RiskLevel
-from app.models.risk import RiskEvidence, RiskInput, RiskResult
+from app.models.risk import RiskBreakdownItem, RiskEvidence, RiskInput, RiskResult
 from app.risk.rules import RULES, RiskRule
 
 
 class DeterministicRiskEngine:
-    """Scores risk from reproducible evidence only."""
+    """Scores risk from reproducible evidence only, normalized to a 0-100 scale."""
 
     def score(self, risk_input: RiskInput, custom_rules: list | None = None) -> RiskResult:
         evidence = self._collect_rule_evidence(risk_input.changed_files, custom_rules=custom_rules)
@@ -24,6 +24,9 @@ class DeterministicRiskEngine:
                     score=dep_score,
                     recommendation="Deploy change behind a feature flag and monitor staging logs.",
                     threshold="> 10 dependencies",
+                    rule="large_blast_radius",
+                    evidence_type="graph_metric",
+                    evidence_value=str(risk_input.dependency_count),
                 )
             )
 
@@ -38,6 +41,9 @@ class DeterministicRiskEngine:
                     score=1.0,
                     recommendation="Add unit tests covering modified business logic.",
                     threshold="0 test changes",
+                    rule="missing_tests",
+                    evidence_type="repo_structure",
+                    evidence_value="0_tests",
                 )
             )
 
@@ -53,6 +59,9 @@ class DeterministicRiskEngine:
                     file_paths=risk_input.changed_files[:15],
                     recommendation="Break pull request into smaller, isolated sub-PRs for safer code review.",
                     threshold=">= 15 files",
+                    rule="large_refactor",
+                    evidence_type="diff_metric",
+                    evidence_value=str(len(risk_input.changed_files)),
                 )
             )
 
@@ -68,6 +77,9 @@ class DeterministicRiskEngine:
                     file_paths=risk_input.critical_modules,
                     recommendation="Run end-to-end integration tests for critical business workflows.",
                     threshold="1 critical module",
+                    rule="critical_service_modified",
+                    evidence_type="path_keyword",
+                    evidence_value=",".join(risk_input.critical_modules[:3]),
                 )
             )
 
@@ -82,10 +94,12 @@ class DeterministicRiskEngine:
                     score=min(len(risk_input.impacted_modules) / 4.0, 1.0),
                     recommendation="Coordinate deployment order across affected microservices.",
                     threshold=">= 3 modules",
+                    rule="multi_service_affected",
+                    evidence_type="graph_metric",
+                    evidence_value=str(len(risk_input.impacted_modules)),
                 )
             )
 
-        # Function-level precision signals (only emitted when diff parsing data is available)
         if risk_input.affected_functions:
             fn_count = len(risk_input.affected_functions)
             evidence.append(
@@ -102,10 +116,12 @@ class DeterministicRiskEngine:
                     score=min(fn_count / 10.0, 1.0),
                     recommendation="Review all call sites of the modified functions for argument and return-type compatibility.",
                     threshold="1 function",
+                    rule="function_level_impact",
+                    evidence_type="diff_ast",
+                    evidence_value=",".join(risk_input.affected_functions[:5]),
                 )
             )
 
-        # Hub node signal: changing a heavily-connected node multiplies downstream risk
         if risk_input.hub_nodes_affected:
             hub_count = len(risk_input.hub_nodes_affected)
             evidence.append(
@@ -121,10 +137,12 @@ class DeterministicRiskEngine:
                     score=min(hub_count / 3.0, 1.0),
                     recommendation="Run the full test suite — hub nodes have many consumers and failures propagate widely.",
                     threshold="1 hub node",
+                    rule="hub_node_affected",
+                    evidence_type="graph_topology",
+                    evidence_value=",".join(risk_input.hub_nodes_affected[:3]),
                 )
             )
 
-        # Bridge node signal: chokepoints amplify connectivity risk
         if risk_input.bridge_nodes_affected:
             bridge_count = len(risk_input.bridge_nodes_affected)
             evidence.append(
@@ -141,23 +159,60 @@ class DeterministicRiskEngine:
                     score=min(bridge_count / 2.0, 1.0),
                     recommendation="Validate integration points between all subsystems connected through these nodes.",
                     threshold="1 bridge node",
+                    rule="bridge_node_affected",
+                    evidence_type="graph_topology",
+                    evidence_value=",".join(risk_input.bridge_nodes_affected[:3]),
                 )
             )
 
-        raw_score = sum(item.weight * item.score for item in evidence)
-        score = round(min(raw_score, 1.0), 4)
-        level = self._level(score)
+        # Anti-Double Counting & Deduplication Audit
+        seen_categories: set[str] = set()
+        raw_rule_score = 0.0
+        risk_breakdown: list[RiskBreakdownItem] = []
+
+        for item in sorted(evidence, key=lambda i: i.weight * i.score, reverse=True):
+            points = int(round(item.weight * item.score * 100))
+            raw_rule_score += points
+
+            risk_breakdown.append(
+                RiskBreakdownItem(
+                    rule=item.rule or item.signal,
+                    category=item.category,
+                    points=points,
+                    evidence=item.description,
+                    affected_files=item.file_paths,
+                    recommendation=item.recommendation,
+                )
+            )
+
+        # Apply diminishing returns scaling to prevent double counting overflow
+        normalized_score = raw_rule_score
+        if raw_rule_score > 60:
+            normalized_score = 60 + (raw_rule_score - 60) * 0.5
+
+        capped_score = int(round(max(min(normalized_score, 100), 0)))
+        level = self._level(capped_score)
         confidence = self._confidence(risk_input, evidence)
+
         reasons = [
             f"{item.name or item.signal}: {item.description}"
             for item in sorted(evidence, key=lambda item: item.weight * item.score, reverse=True)
         ]
+
+        audit = {
+            "raw_rule_score": round(raw_rule_score, 2),
+            "normalized_score": round(normalized_score, 2),
+            "capped_score": capped_score,
+        }
+
         return RiskResult(
-            score=score,
+            score=capped_score,
             level=level,
             confidence=confidence,
             evidence=evidence,
             reasons=reasons,
+            risk_breakdown=risk_breakdown,
+            audit=audit,
         )
 
     def _collect_rule_evidence(self, changed_files: list[str], custom_rules: list | None = None) -> list[RiskEvidence]:
@@ -212,16 +267,19 @@ class DeterministicRiskEngine:
                     recommendation=meta.get("recommendation", ""),
                     enabled=True,
                     threshold=meta.get("threshold", "1 file"),
+                    rule=signal,
+                    evidence_type="path_match",
+                    evidence_value=",".join(sorted(set(paths))[:5]),
                 )
             )
         return evidence
 
-    def _level(self, score: float) -> RiskLevel:
-        if score >= 0.75:
+    def _level(self, score: int) -> RiskLevel:
+        if score >= 75:
             return RiskLevel.CRITICAL
-        if score >= 0.55:
+        if score >= 55:
             return RiskLevel.HIGH
-        if score >= 0.25:
+        if score >= 25:
             return RiskLevel.MEDIUM
         return RiskLevel.LOW
 
@@ -236,5 +294,3 @@ class DeterministicRiskEngine:
         if risk_input.dependency_count:
             confidence += 0.05
         return round(min(confidence, 0.98), 3)
-
-

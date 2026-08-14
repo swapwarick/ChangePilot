@@ -16,12 +16,23 @@ class OpenAICompatibleProvider(AIProvider):
         if self.config.api_key:
             headers["Authorization"] = f"Bearer {self.config.api_key.get_secret_value()}"
 
-        payload = {
+        payload: dict = {
             "model": request.model or self.config.model,
             "messages": [message.model_dump() for message in request.messages],
             "temperature": request.temperature if request.temperature is not None else self.config.temperature,
             "max_tokens": request.max_tokens or self.config.max_tokens,
         }
+
+        # top_p: use request override, then config default (if set)
+        top_p = request.top_p if request.top_p is not None else self.config.top_p
+        if top_p is not None:
+            payload["top_p"] = top_p
+
+        # seed: use request override, then config default (if set)
+        seed = request.seed if request.seed is not None else self.config.seed
+        if seed is not None:
+            payload["seed"] = seed
+
         async with httpx.AsyncClient(timeout=self.config.timeout_seconds) as client:
             response = await client.post(url, json=payload, headers=headers)
             response.raise_for_status()

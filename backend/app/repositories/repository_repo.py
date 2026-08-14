@@ -44,7 +44,10 @@ class RepositoryRepository:
         return RepositorySummary(
             id=row.id,
             name=row.name,
+            owner=row.owner or "",
+            full_name=row.full_name or row.name,
             source=row.source,
-            default_branch=row.default_branch,
+            url=row.url,
+            default_branch=row.default_branch or "main",
             language=row.language,
         )

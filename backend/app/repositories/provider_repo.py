@@ -93,6 +93,8 @@ class AIProviderConfigRepository:
             fallback_provider_ids=row.fallback_provider_ids,
             custom_headers=row.custom_headers,
             temperature=row.temperature,
+            top_p=getattr(row, "top_p", None),
+            seed=getattr(row, "seed", None),
             max_tokens=row.max_tokens,
             timeout_seconds=row.timeout_seconds,
             retry_policy=RetryPolicy(

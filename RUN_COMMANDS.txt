@@ -1,0 +1,44 @@
+======================================================================
+                   ChangePilot - How to Run Commands
+======================================================================
+
+Option 1: Run Backend & Frontend (Local Development - Recommended)
+----------------------------------------------------------------------
+Open TWO separate terminal windows in your project folder:
+
+TERMINAL 1 (Backend - Python/FastAPI):
+    cd backend
+    
+    # (Optional) Create & Activate Virtual Environment:
+    python -m venv .venv
+    .\.venv\Scripts\Activate.ps1    # PowerShell
+    # or .\.venv\Scripts\activate.bat   # Command Prompt
+
+    pip install -e .                # Install backend dependencies
+
+    python -m uvicorn app.main:app --reload --port 8000
+
+    * Backend API running at: http://localhost:8000
+    * Interactive API Docs at: http://localhost:8000/docs
+
+TERMINAL 2 (Frontend - Next.js):
+    cd frontend
+    npm run dev
+
+    * Web Application running at: http://localhost:3000
+
+
+Option 2: Run Backend Tests
+----------------------------------------------------------------------
+In project root or backend folder:
+    cd backend
+    python -m pytest
+
+
+Option 3: Run full stack via Docker Compose
+----------------------------------------------------------------------
+In project root:
+    docker compose up --build
+
+
+======================================================================

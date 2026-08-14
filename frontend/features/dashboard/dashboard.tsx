@@ -19,6 +19,7 @@ import {
   Github,
   AlertTriangle,
   FileCode,
+  FolderCode,
   Layers,
   CheckCircle2,
   AlertCircle,
@@ -37,6 +38,7 @@ import {
   GitCompare,
   Trash2,
   Save,
+  ShieldAlert,
   X
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -44,11 +46,24 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
-import { DependencyGraph } from "./dependency-graph";
+import dynamic from "next/dynamic";
+
+const DependencyGraph = dynamic(
+  () => import("./dependency-graph").then((m) => ({ default: m.DependencyGraph })),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-[520px] items-center justify-center rounded-xl border border-border/80 bg-muted/20 text-xs text-muted-foreground">
+        Loading graph…
+      </div>
+    ),
+  }
+);
 import { RepoAnalyzerModal } from "@/features/github/repo-analyzer-modal";
 import { JobProgressBanner } from "@/features/analysis/job-progress-banner";
 import { AIProviderSettings } from "@/features/providers/provider-settings";
-import { AIProviderConfig, ChangeAnalysisResult, RepoKnowledgeGraph } from "@/types/api";
+import { UserMenu } from "@/components/user-menu";
+import { AIProviderConfig, ChangeAnalysisResult, PolicyComparisonResult, PolicyRuleConfig, RepoKnowledgeGraph, RiskPolicy } from "@/types/api";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
@@ -71,7 +86,9 @@ function levelVariant(level: string) {
 }
 
 function Donut({ score = 0 }: { score?: number }) {
-  const degrees = Math.round(score * 360);
+  const normScore = score > 1 ? score / 100 : score;
+  const displayVal = score > 1 ? Math.round(score) : Math.round(score * 100);
+  const degrees = Math.round(normScore * 360);
   return (
     <div
       className="grid size-32 place-items-center rounded-full"
@@ -81,7 +98,7 @@ function Donut({ score = 0 }: { score?: number }) {
     >
       <div className="grid size-24 place-items-center rounded-full bg-surface text-center">
         <div>
-          <div className="text-2xl font-semibold">{score.toFixed(2)}</div>
+          <div className="text-2xl font-semibold">{displayVal}/100</div>
           <div className="text-[11px] text-muted-foreground">Risk score</div>
         </div>
       </div>
@@ -108,6 +125,7 @@ export function Dashboard() {
   const [simBaseBranch, setSimBaseBranch] = useState("main");
   const [simHeadBranch, setSimHeadBranch] = useState("main");
   const [simulatingPr, setSimulatingPr] = useState(false);
+  const [simulateError, setSimulateError] = useState<string | null>(null);
 
   // Enterprise Risk Policy Engine State
   const [allPolicies, setAllPolicies] = useState<RiskPolicy[]>([]);
@@ -179,14 +197,16 @@ export function Dashboard() {
     }
   };
 
-  const fetchRepoData = async (repoId: string, repoList: any[] = repositories) => {
-    // 1. Immediately flush all stale state to prevent cross-repo contamination
-    setAnalyses([]);
-    setKnowledgeGraph(null);
-    setPullRequests([]);
-    setBranches([]);
-    setSelectedAnalysisId(null);
-    setRepoLoading(true);
+  const fetchRepoData = async (repoId: string, repoList: any[] = repositories, silent = false) => {
+    if (!silent) {
+      // 1. Immediately flush all stale state to prevent cross-repo contamination
+      setAnalyses([]);
+      setKnowledgeGraph(null);
+      setPullRequests([]);
+      setBranches([]);
+      setSelectedAnalysisId(null);
+      setRepoLoading(true);
+    }
 
     try {
       // 2. Fetch Analyses for active repository only
@@ -201,26 +221,40 @@ export function Dashboard() {
         setKnowledgeGraph(await kgRes.json());
       }
 
-      // 4. Fetch Live GitHub PRs and Branches if repository info is available
+      // 4. Fetch PRs and Branches based on repository type (GitHub vs Local)
       const repoObj = repoList.find((r) => r.id === repoId);
-      if (repoObj && repoObj.owner && repoObj.name) {
-        try {
-          const token = localStorage.getItem("github_token") || "";
-          const headers: Record<string, string> = token ? { Authorization: token } : {};
+      if (repoObj) {
+        if (repoObj.source === "local" || repoObj.owner === "local" || !repoObj.owner) {
+          try {
+            const localPath = repoObj.url || repoObj.name;
+            const infoRes = await fetch(`${API_BASE}/local/info?path=${encodeURIComponent(localPath)}`);
+            if (infoRes.ok) {
+              const info = await infoRes.json();
+              if (info.branches && info.branches.length > 0) {
+                setBranches(info.branches);
+              }
+            }
+          } catch (localErr) {}
+        } else if (repoObj.source === "github" && repoObj.owner) {
+          try {
+            const token = localStorage.getItem("github_token") || localStorage.getItem("changepilot_github_token") || "";
+            if (token) {
+              const headers: Record<string, string> = { Authorization: token };
+              const prRes = await fetch(`${API_BASE}/github/repositories/${repoObj.owner}/${repoObj.name}/pulls`, { headers });
+              if (prRes.ok) setPullRequests(await prRes.json());
 
-          const prRes = await fetch(`${API_BASE}/github/repositories/${repoObj.owner}/${repoObj.name}/pulls`, { headers });
-          if (prRes.ok) setPullRequests(await prRes.json());
-
-          const brRes = await fetch(`${API_BASE}/github/repositories/${repoObj.owner}/${repoObj.name}/branches`, { headers });
-          if (brRes.ok) setBranches(await brRes.json());
-        } catch (gitErr) {
-          console.warn("GitHub live PR/Branch fetch notice:", gitErr);
+              const brRes = await fetch(`${API_BASE}/github/repositories/${repoObj.owner}/${repoObj.name}/branches`, { headers });
+              if (brRes.ok) setBranches(await brRes.json());
+            }
+          } catch (gitErr) {}
         }
       }
     } catch (err: any) {
       console.warn("Repo fetch notice:", err?.message || err);
     } finally {
-      setRepoLoading(false);
+      if (!silent) {
+        setRepoLoading(false);
+      }
     }
   };
 
@@ -232,7 +266,7 @@ export function Dashboard() {
     if (activeRepoId) {
       fetchRepoData(activeRepoId, repositories);
     }
-  }, [activeRepoId, repositories.length]);
+  }, [activeRepoId]);
 
   const latestAnalysis = (selectedAnalysisId && analyses.find((a) => a.id === selectedAnalysisId)) || (analyses.length > 0 ? analyses[0] : null);
   const healthMetrics = knowledgeGraph?.health_metrics;
@@ -256,8 +290,12 @@ export function Dashboard() {
     if (!repoObj) return;
 
     setSimulatingPr(true);
+    setSimulateError(null);
     try {
       const token = localStorage.getItem("github_token") || "";
+      const repoUrl = repoObj.url || (repoObj.source === "local" ? repoObj.name : `https://github.com/${repoObj.owner || "local"}/${repoObj.name}`);
+      const ownerName = repoObj.owner || (repoObj.source === "local" ? "local" : "github");
+
       const res = await fetch(`${API_BASE}/jobs`, {
         method: "POST",
         headers: {
@@ -265,20 +303,23 @@ export function Dashboard() {
           Authorization: token
         },
         body: JSON.stringify({
-          repository_url: repoObj.url,
-          owner: repoObj.owner,
+          repository_url: repoUrl,
+          owner: ownerName,
           repo_name: repoObj.name,
-          base_ref: simBaseBranch,
-          head_ref: simHeadBranch
+          base_ref: simBaseBranch || "main",
+          head_ref: simHeadBranch || "HEAD"
         })
       });
 
       if (res.ok) {
         const job = await res.json();
         setActiveJobId(job.id);
+      } else {
+        const errData = await res.json().catch(() => ({ detail: null }));
+        setSimulateError(errData.detail || "PR Simulation job creation failed. Please check repository & branch references.");
       }
-    } catch (err) {
-      console.error("PR simulation error:", err);
+    } catch (err: any) {
+      setSimulateError(`PR Simulation error: ${err?.message || err}`);
     } finally {
       setSimulatingPr(false);
     }
@@ -449,13 +490,14 @@ export function Dashboard() {
   };
 
   useEffect(() => {
-    if (latestAnalysis && !latestAnalysis.ai_report) {
+    // Only poll silently if there's an active job running that might produce/update an AI report
+    if (latestAnalysis && !latestAnalysis.ai_report && activeJobId) {
       const interval = setInterval(() => {
-        if (activeRepoId) fetchRepoData(activeRepoId, repositories);
+        if (activeRepoId) fetchRepoData(activeRepoId, repositories, true);
       }, 3000);
       return () => clearInterval(interval);
     }
-  }, [latestAnalysis?.id, latestAnalysis?.ai_report, activeRepoId]);
+  }, [latestAnalysis?.id, latestAnalysis?.ai_report, activeRepoId, activeJobId]);
 
   const handleCopyReport = () => {
     if (latestAnalysis?.ai_report) {
@@ -484,13 +526,13 @@ export function Dashboard() {
               <button
                 key={item.label}
                 onClick={() => setActiveTab(item.label)}
-                className={`flex h-9 w-full items-center gap-3 rounded-md px-3 text-sm transition-colors text-left ${
+                className={`flex items-center gap-3 rounded-md px-3 py-2 text-left font-medium transition-colors ${
                   isActive
-                    ? "bg-primary/12 text-primary font-medium"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                    ? "bg-primary/10 text-primary font-semibold"
+                    : "text-muted-foreground hover:bg-surface-elevated hover:text-foreground"
                 }`}
               >
-                <Icon className="size-4 shrink-0" />
+                <Icon className="size-4" />
                 <span>{item.label}</span>
               </button>
             );
@@ -524,9 +566,9 @@ export function Dashboard() {
             <kbd className="ml-auto rounded-sm border border-border px-1.5 py-0.5 text-xs">⌘ K</kbd>
           </div>
           <div className="flex items-center justify-end gap-2">
-            <Button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2">
-              <Github className="size-4" />
-              Connect & Analyze Repo
+            <Button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 bg-gradient-to-r from-emerald-600 to-indigo-600 hover:from-emerald-700 hover:to-indigo-700 text-white shadow-xs">
+              <FolderCode className="size-4" />
+              Scan Repository / Local Folder
             </Button>
             <Button aria-label="Notifications" size="icon" variant="ghost">
               <Bell className="size-4" />
@@ -534,9 +576,7 @@ export function Dashboard() {
             <Button aria-label="Help" size="icon" variant="ghost">
               <CircleHelp className="size-4" />
             </Button>
-            <Button aria-label="Theme" size="icon" variant="ghost">
-              <Sun className="size-4" />
-            </Button>
+            <UserMenu />
           </div>
         </header>
 
@@ -545,7 +585,7 @@ export function Dashboard() {
             <JobProgressBanner
               jobId={activeJobId}
               onJobComplete={(anlId) => {
-                if (activeRepoId) fetchRepoData(activeRepoId);
+                if (activeRepoId) fetchRepoData(activeRepoId, repositories, true);
               }}
             />
           )}
@@ -593,20 +633,26 @@ export function Dashboard() {
                           <div className="flex items-center gap-3">
                             <span className="size-2.5 rounded-full bg-primary" />
                             <span className="min-w-28 text-muted-foreground">Risk Level</span>
-                            <Badge variant={levelVariant(latestAnalysis?.risk.level || "low")}>
-                              {latestAnalysis?.risk.level?.toUpperCase() || "LOW"}
-                            </Badge>
+                            {latestAnalysis ? (
+                              <Badge variant={levelVariant(latestAnalysis.risk.level || "low")}>
+                                {latestAnalysis.risk.level?.toUpperCase() || "LOW"}
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline">UNSCANNED</Badge>
+                            )}
                           </div>
                           <div className="flex items-center gap-3">
                             <span className="size-2.5 rounded-full bg-warning" />
                             <span className="min-w-28 text-muted-foreground">Confidence</span>
-                            <span className="font-semibold">{((latestAnalysis?.risk.confidence || 0) * 100).toFixed(0)}%</span>
+                            <span className="font-semibold">
+                              {latestAnalysis ? `${((latestAnalysis.risk.confidence || 0) * 100).toFixed(0)}%` : "--"}
+                            </span>
                           </div>
                           <div className="flex items-center gap-3">
                             <span className="size-2.5 rounded-full bg-emerald-500" />
                             <span className="min-w-28 text-muted-foreground">Health Score</span>
                             <span className="font-semibold text-emerald-600 dark:text-emerald-400">
-                              {healthMetrics?.health_score !== undefined ? `${healthMetrics.health_score} / 100` : "100 / 100"}
+                              {healthMetrics?.health_score !== undefined ? `${healthMetrics.health_score} / 100` : "N/A"}
                             </span>
                           </div>
                         </div>
@@ -616,15 +662,15 @@ export function Dashboard() {
                       <div className="rounded-md border border-border bg-background p-4">
                         <div className="text-xs text-muted-foreground">Repository Health</div>
                         <div className="mt-2 text-3xl font-bold text-emerald-600 dark:text-emerald-400">
-                          {healthMetrics?.health_score !== undefined ? `${healthMetrics.health_score}%` : "100%"}
+                          {healthMetrics?.health_score !== undefined ? `${healthMetrics.health_score}%` : "N/A"}
                         </div>
                         <div className="mt-1 text-[11px] text-muted-foreground">
-                          {healthMetrics?.total_files || 0} files • {healthMetrics?.total_classes || 0} classes • {healthMetrics?.total_functions || 0} fns
+                          {healthMetrics ? `${healthMetrics.total_files || 0} files • ${healthMetrics.total_classes || 0} classes • ${healthMetrics.total_functions || 0} fns` : "No repository scanned"}
                         </div>
                         <div className="mt-4 h-2 rounded-full bg-muted overflow-hidden">
                           <div
                             className="h-full bg-emerald-500 transition-all duration-500"
-                            style={{ width: `${healthMetrics?.health_score || 100}%` }}
+                            style={{ width: `${healthMetrics?.health_score !== undefined ? healthMetrics.health_score : 0}%` }}
                           />
                         </div>
                       </div>
@@ -633,23 +679,31 @@ export function Dashboard() {
                       <div className="rounded-md border border-border bg-background p-4">
                         <div className="text-xs text-muted-foreground">Circular Dependencies</div>
                         <div className="mt-2 text-2xl font-semibold text-amber-600 dark:text-amber-400">
-                          {healthMetrics?.circular_dependencies.length || 0}
+                          {healthMetrics ? healthMetrics.circular_dependencies.length : "--"}
                         </div>
                         <div className="mt-1 text-xs text-muted-foreground">Cycle import loops detected</div>
                         <div className="mt-4 text-[10px] text-muted-foreground truncate">
-                          {healthMetrics?.circular_dependencies.length ? `Loop: ${healthMetrics.circular_dependencies[0].join(" ➔ ")}` : "No circular import loops"}
+                          {healthMetrics
+                            ? healthMetrics.circular_dependencies.length
+                              ? `Loop: ${healthMetrics.circular_dependencies[0].join(" ➔ ")}`
+                              : "No circular import loops"
+                            : "Connect a repository"}
                         </div>
                       </div>
 
-                      {/* Widget 3: Test Coverage Gaps */}
+                      {/* Widget 3: Potential Test Gaps */}
                       <div className="rounded-md border border-border bg-background p-4">
-                        <div className="text-xs text-muted-foreground">Test Coverage Gaps</div>
+                        <div className="text-xs text-muted-foreground">Potential Test Gaps</div>
                         <div className="mt-2 text-2xl font-semibold text-rose-600 dark:text-rose-400">
-                          {healthMetrics?.test_coverage_gaps.length || 0}
+                          {healthMetrics ? (healthMetrics.potential_test_gaps?.length ?? healthMetrics.test_coverage_gaps?.length ?? 0) : "--"}
                         </div>
                         <div className="mt-1 text-xs text-muted-foreground">Source modules lacking tests</div>
                         <div className="mt-4 text-[10px] text-muted-foreground truncate">
-                          {healthMetrics?.test_coverage_gaps.length ? `Gap: ${healthMetrics.test_coverage_gaps[0]}` : "Full test coverage"}
+                          {healthMetrics
+                            ? (healthMetrics.potential_test_gaps || healthMetrics.test_coverage_gaps || []).length
+                              ? `Gap: ${(healthMetrics.potential_test_gaps || healthMetrics.test_coverage_gaps || [])[0]}`
+                              : "No test gaps detected"
+                            : "Connect a repository"}
                         </div>
                       </div>
 
@@ -657,11 +711,15 @@ export function Dashboard() {
                       <div className="rounded-md border border-border bg-background p-4">
                         <div className="text-xs text-muted-foreground">Layering Violations</div>
                         <div className="mt-2 text-2xl font-semibold text-indigo-600 dark:text-indigo-400">
-                          {healthMetrics?.architectural_violations.length || 0}
+                          {healthMetrics ? healthMetrics.architectural_violations.length : "--"}
                         </div>
                         <div className="mt-1 text-xs text-muted-foreground">Cross-layer policy breaches</div>
                         <div className="mt-4 text-[10px] text-muted-foreground truncate">
-                          {healthMetrics?.architectural_violations.length ? healthMetrics.architectural_violations[0].rule : "No policy violations"}
+                          {healthMetrics
+                            ? healthMetrics.architectural_violations.length
+                              ? healthMetrics.architectural_violations[0].rule
+                              : "No policy violations"
+                            : "Connect a repository"}
                         </div>
                       </div>
                     </div>
@@ -795,6 +853,7 @@ export function Dashboard() {
                     <DependencyGraph
                       nodes={knowledgeGraph?.nodes || latestAnalysis?.dependency_graph?.nodes || []}
                       edges={knowledgeGraph?.edges || latestAnalysis?.dependency_graph?.edges || []}
+                      graphHealth={latestAnalysis?.dependency_graph?.graph_health}
                     />
                   </CardContent>
                 </Card>
@@ -1064,6 +1123,12 @@ export function Dashboard() {
                       )}
                       {simulatingPr ? "Simulating PR Blast Radius..." : "Simulate PR Blast Radius"}
                     </Button>
+                    {simulateError && (
+                      <div className="mt-2 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive flex items-center gap-2">
+                        <ShieldAlert className="size-3.5 shrink-0" />
+                        <span>{simulateError}</span>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               </div>
@@ -1150,21 +1215,25 @@ export function Dashboard() {
 
                 <Card>
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-xs uppercase text-muted-foreground">Orphan Modules</CardTitle>
+                    <CardTitle className="text-xs uppercase text-muted-foreground">Potential Orphan Candidates</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="text-2xl font-bold text-warning">{healthMetrics?.orphan_modules.length || 28}</div>
-                    <div className="text-xs text-muted-foreground mt-1">Unreferenced files</div>
+                    <div className="text-2xl font-bold text-warning">
+                      {healthMetrics?.potential_orphan_candidates?.length ?? healthMetrics?.orphan_modules?.length ?? 0}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1">Unreferenced source files</div>
                   </CardContent>
                 </Card>
 
                 <Card>
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-xs uppercase text-muted-foreground">Test Coverage Gaps</CardTitle>
+                    <CardTitle className="text-xs uppercase text-muted-foreground">Potential Test Gaps</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="text-2xl font-bold text-warning">{healthMetrics?.test_coverage_gaps.length || 20}</div>
-                    <div className="text-xs text-muted-foreground mt-1">Missing unit tests</div>
+                    <div className="text-2xl font-bold text-warning">
+                      {healthMetrics?.potential_test_gaps?.length ?? healthMetrics?.test_coverage_gaps?.length ?? 0}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1">Missing unit test specs</div>
                   </CardContent>
                 </Card>
               </div>
@@ -1172,23 +1241,12 @@ export function Dashboard() {
               <div className="grid gap-4 lg:grid-cols-2">
                 <Card>
                   <CardHeader>
-                    <CardTitle>Orphan Modules (Unreferenced Files)</CardTitle>
-                    <CardDescription>Files that are not imported by any other module in the codebase.</CardDescription>
+                    <CardTitle>Potential Orphan Candidates (Unreferenced Source Files)</CardTitle>
+                    <CardDescription>Source files that are not imported by any other module in the codebase.</CardDescription>
                   </CardHeader>
                   <CardContent>
                     <div className="max-h-64 overflow-y-auto space-y-1 text-xs font-mono">
-                      {(healthMetrics?.orphan_modules || [
-                        "src/app/manifest.ts",
-                        "src/app/opengraph-image.tsx",
-                        "src/app/sitemap.ts",
-                        "src/lib/abtest.ts",
-                        "src/lib/credits.ts",
-                        "src/lib/documentParser.ts",
-                        "src/lib/dsrRates.ts",
-                        "src/lib/email.ts",
-                        "src/lib/glassbox.ts",
-                        "src/lib/logger.ts"
-                      ]).map((item, idx) => (
+                      {(healthMetrics?.potential_orphan_candidates || healthMetrics?.orphan_modules || []).map((item, idx) => (
                         <div key={idx} className="p-2 rounded border border-border bg-background flex items-center justify-between">
                           <span className="truncate">{item}</span>
                           <Badge variant="outline">Orphan</Badge>
@@ -1200,23 +1258,15 @@ export function Dashboard() {
 
                 <Card>
                   <CardHeader>
-                    <CardTitle>Test Coverage Gaps</CardTitle>
-                    <CardDescription>Source code files lacking accompanying unit/integration spec tests.</CardDescription>
+                    <CardTitle>Potential Test Gaps</CardTitle>
+                    <CardDescription>Source modules lacking associated unit test specs.</CardDescription>
                   </CardHeader>
                   <CardContent>
                     <div className="max-h-64 overflow-y-auto space-y-1 text-xs font-mono">
-                      {(healthMetrics?.test_coverage_gaps || [
-                        "src/app/api/cron/keepalive/route.ts",
-                        "src/app/api/cron/sync-tenders/route.ts",
-                        "src/app/api/daily-briefing/route.ts",
-                        "src/app/api/document-insights/route.ts",
-                        "src/app/api/gemini/summarize-nit/route.ts",
-                        "src/app/api/gemini/tender-strategy/route.ts",
-                        "src/app/api/intelligence/market/route.ts"
-                      ]).map((item, idx) => (
+                      {(healthMetrics?.potential_test_gaps || healthMetrics?.test_coverage_gaps || []).map((item, idx) => (
                         <div key={idx} className="p-2 rounded border border-border bg-background flex items-center justify-between">
                           <span className="truncate">{item}</span>
-                          <Badge variant="warning">Missing Test</Badge>
+                          <Badge variant="warning">Potential Gap</Badge>
                         </div>
                       ))}
                     </div>

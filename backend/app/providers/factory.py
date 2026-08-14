@@ -9,7 +9,7 @@ class AIProviderFactory:
     def create(self, config: AIProviderConfig) -> AIProvider:
         if config.kind == AIProviderKind.OLLAMA:
             return OllamaProvider(config)
-        if config.kind in {AIProviderKind.OPENAI_COMPATIBLE, AIProviderKind.CUSTOM_REST}:
+        if config.kind in {AIProviderKind.OPENAI_COMPATIBLE, AIProviderKind.CUSTOM_REST, AIProviderKind.GROQ, AIProviderKind.NVIDIA}:
             return OpenAICompatibleProvider(config)
         raise ValueError(f"Unsupported AI provider kind: {config.kind}")
 

@@ -14,6 +14,23 @@ class RiskEvidence(BaseModel):
     recommendation: str = ""
     enabled: bool = True
     threshold: str = ""
+    # Machine-readable evidence fields
+    rule: str = ""
+    source_file: str | None = None
+    target_file: str | None = None
+    line_number: int | None = None
+    evidence_type: str = "signal"
+    evidence_value: str = ""
+    confidence: float = 1.0
+
+
+class RiskBreakdownItem(BaseModel):
+    rule: str
+    category: str
+    points: int
+    evidence: str
+    affected_files: list[str] = Field(default_factory=list)
+    recommendation: str = ""
 
 
 class RiskInput(BaseModel):
@@ -57,9 +74,11 @@ class RiskInput(BaseModel):
 
 
 class RiskResult(BaseModel):
-    score: float = Field(ge=0, le=1)
+    score: int = Field(ge=0, le=100)  # 0-100 integer scale
     level: RiskLevel
     confidence: float = Field(ge=0, le=1)
     evidence: list[RiskEvidence]
     reasons: list[str]
+    risk_breakdown: list[RiskBreakdownItem] = Field(default_factory=list)
+    audit: dict[str, float | int] = Field(default_factory=dict)
 

@@ -42,16 +42,14 @@ class BlastRadiusResult:
     max_depth_reached: int = 0
     # Total number of nodes in the impact set (changed + impacted)
     total_impact_size: int = 0
+    # Detailed traversal paths explaining why nodes are impacted
+    dependency_paths: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
 # Edge relationship categories
 # ---------------------------------------------------------------------------
 
-# Edges that propagate impact *forward* from the changed node to its consumers.
-# Reading direction: source IMPORTS/USES/CALLS target — so if *target* changes,
-# *source* may be affected.  We reverse the edge direction for blast radius:
-# we want nodes that IMPORT or CALL the changed node.
 _FORWARD_IMPACT_RELATIONSHIPS = frozenset({
     "IMPORTS",
     "CALLS",
@@ -65,14 +63,10 @@ _FORWARD_IMPACT_RELATIONSHIPS = frozenset({
 def _build_reverse_adjacency(
     edges: list[DependencyEdge],
 ) -> dict[str, list[str]]:
-    """Build a reverse adjacency map: target_id → list of source_ids.
-
-    A reverse map lets us answer "who depends on *this* node?" which is exactly
-    what blast radius analysis needs — starting from a changed node, find all
-    nodes that reference it.
-    """
     adj: dict[str, list[str]] = {}
     for edge in edges:
+        if getattr(edge, "edge_type", None) in ("CONFIG_REFERENCE", "BUILD_DEPENDENCY"):
+            continue
         if edge.relationship in _FORWARD_IMPACT_RELATIONSHIPS:
             adj.setdefault(edge.target, []).append(edge.source)
     return adj
@@ -87,36 +81,19 @@ def compute_blast_radius(
     changed_node_ids: list[str],
     max_depth: int = 3,
 ) -> BlastRadiusResult:
-    """Traverse the dependency graph to find all transitively impacted nodes.
-
-    Uses breadth-first search over a reverse adjacency map so that the result
-    is ordered by traversal depth.  Nodes of kind ``package`` and ``repository``
-    are excluded from the impacted set as they add noise without diagnostic value.
-
-    Args:
-        graph:            The full repository dependency graph.
-        changed_node_ids: IDs of the directly changed graph nodes (depth 0).
-        max_depth:        Maximum BFS depth.  Deeper traversals are more complete
-                          but slower on large graphs.  Default: 3.
-
-    Returns:
-        :class:`BlastRadiusResult` containing changed nodes, all transitively
-        impacted nodes, impacted file paths, and depth metadata.
-    """
     node_by_id: dict[str, DependencyNode] = {n.id: n for n in graph.nodes}
     reverse_adj = _build_reverse_adjacency(graph.edges)
 
-    # Nodes to skip — they are infrastructure/meta, not code units
     _EXCLUDED_KINDS = frozenset({"package", "repository", "folder"})
 
     result = BlastRadiusResult()
     visited: set[str] = set()
 
-    # Seed the queue with directly changed nodes at depth 0
-    queue: deque[tuple[str, int]] = deque()
+    # Queue contains: (current_id, depth, path_string)
+    queue: deque[tuple[str, int, str]] = deque()
     for nid in changed_node_ids:
         if nid in node_by_id:
-            queue.append((nid, 0))
+            queue.append((nid, 0, nid))
             visited.add(nid)
             node = node_by_id[nid]
             result.changed_nodes.append(
@@ -133,7 +110,7 @@ def compute_blast_radius(
     max_depth_reached = 0
 
     while queue:
-        current_id, depth = queue.popleft()
+        current_id, depth, path_so_far = queue.popleft()
         max_depth_reached = max(max_depth_reached, depth)
 
         if depth >= max_depth:
@@ -148,6 +125,9 @@ def compute_blast_radius(
             if node is None or node.kind in _EXCLUDED_KINDS:
                 continue
 
+            new_path = f"{path_so_far} -> {dependent_id}"
+            result.dependency_paths.append(new_path)
+
             blast_node = BlastRadiusNode(
                 node_id=dependent_id,
                 label=node.label,
@@ -157,9 +137,8 @@ def compute_blast_radius(
                 is_critical=node.is_critical,
             )
             result.impacted_nodes.append(blast_node)
-            queue.append((dependent_id, depth + 1))
+            queue.append((dependent_id, depth + 1, new_path))
 
-    # Collect unique impacted file paths
     seen_paths: set[str] = set()
     for n in result.impacted_nodes:
         if n.path and n.kind in ("file", "function", "class", "api", "database"):

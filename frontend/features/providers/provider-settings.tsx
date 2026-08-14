@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Download, PlugZap, Plus, Search, Settings2, TestTube2, Upload, Check } from "lucide-react";
+import { PlugZap, Plus, Search, Check } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,11 +10,32 @@ import { AIProviderConfig } from "@/types/api";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
+// ---------- preset model catalogues ----------
+const GROQ_MODELS = [
+  { label: "Llama 3.3 70B (free)", value: "llama-3.3-70b-versatile" },
+  { label: "Llama 3.1 8B (free)", value: "llama-3.1-8b-instant" },
+  { label: "Gemma 2 9B (free)", value: "gemma2-9b-it" },
+  { label: "Mixtral 8x7B (free)", value: "mixtral-8x7b-32768" },
+];
+
+const NVIDIA_MODELS = [
+  { label: "GLM-5.2 (z-ai, free tier)", value: "z-ai/glm-5.2", maxTokens: 16384 },
+  { label: "Llama 3.1 70B (free tier)", value: "meta/llama-3.1-70b-instruct", maxTokens: 4096 },
+  { label: "Llama 3.1 8B (free tier)", value: "meta/llama-3.1-8b-instruct", maxTokens: 4096 },
+  { label: "Mistral NeMo (free tier)", value: "mistralai/mistral-nemo-12b-instruct", maxTokens: 4096 },
+  { label: "Phi-3 Mini (free tier)", value: "microsoft/phi-3-mini-128k-instruct", maxTokens: 4096 },
+];
+
 export function AIProviderSettings() {
   const [providers, setProviders] = useState<AIProviderConfig[]>([]);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [savingId, setSavingId] = useState<string | null>(null);
+
+  // modal state for cloud provider quick-add
+  const [modal, setModal] = useState<null | "groq" | "nvidia">(null);
+  const [apiKey, setApiKey] = useState("");
+  const [selectedModel, setSelectedModel] = useState("");
 
   const fetchProviders = async () => {
     setLoading(true);
@@ -34,6 +55,19 @@ export function AIProviderSettings() {
     fetchProviders();
   }, []);
 
+  const openModal = (kind: "groq" | "nvidia") => {
+    const defaults = kind === "groq" ? GROQ_MODELS : NVIDIA_MODELS;
+    setSelectedModel(defaults[0].value);
+    setApiKey("");
+    setModal(kind);
+  };
+
+  const closeModal = () => {
+    setModal(null);
+    setApiKey("");
+    setSelectedModel("");
+  };
+
   const filteredProviders = providers.filter((provider) =>
     `${provider.name} ${provider.kind} ${provider.model}`.toLowerCase().includes(query.toLowerCase())
   );
@@ -44,7 +78,7 @@ export function AIProviderSettings() {
       const res = await fetch(`${API_BASE}/ai-providers/${provider.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updated)
+        body: JSON.stringify(updated),
       });
       if (res.ok) {
         setProviders((curr) => curr.map((p) => (p.id === provider.id ? updated : p)));
@@ -58,7 +92,7 @@ export function AIProviderSettings() {
       const res = await fetch(`${API_BASE}/ai-providers/${provider.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updated)
+        body: JSON.stringify(updated),
       });
       if (res.ok) {
         fetchProviders();
@@ -67,8 +101,8 @@ export function AIProviderSettings() {
   };
 
   const handleAddDefaultOllama = async () => {
-    setSaving(true);
-    const ollamaConfig: AIProviderConfig = {
+    setSavingId("ollama");
+    const cfg: AIProviderConfig = {
       id: "ollama-local",
       name: "Ollama Local (qwen3:4b)",
       kind: "ollama",
@@ -82,23 +116,70 @@ export function AIProviderSettings() {
       custom_headers: {},
       temperature: 0.2,
       max_tokens: 1600,
-      timeout_seconds: 120
+      timeout_seconds: 120,
+    };
+    try {
+      const res = await fetch(`${API_BASE}/ai-providers/${cfg.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cfg),
+      });
+      if (res.ok) fetchProviders();
+    } catch (err) {
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const handleAddCloudProvider = async () => {
+    if (!modal || !apiKey.trim()) return;
+    setSavingId(modal);
+
+    const isGroq = modal === "groq";
+    const modelMeta = (isGroq ? GROQ_MODELS : NVIDIA_MODELS).find((m) => m.value === selectedModel);
+    const slug = selectedModel.replace(/\//g, "-");
+    const id = isGroq ? `groq-${slug}` : `nvidia-nim-${slug}`;
+
+    const cfg: AIProviderConfig = {
+      id,
+      name: isGroq
+        ? `Groq · ${modelMeta?.label ?? selectedModel}`
+        : `Nvidia NIM · ${modelMeta?.label ?? selectedModel}`,
+      kind: isGroq ? "groq" : "nvidia",
+      base_url: isGroq
+        ? "https://api.groq.com/openai/v1"
+        : "https://integrate.api.nvidia.com/v1",
+      api_key: apiKey.trim(),
+      model: selectedModel,
+      enabled: true,
+      is_default: providers.length === 0,
+      priority: 10,
+      task_categories: ["report"],
+      fallback_provider_ids: [],
+      custom_headers: {},
+      temperature: 1.0,
+      top_p: isGroq ? undefined : 1.0,
+      max_tokens: isGroq ? 4096 : ((modelMeta as any)?.maxTokens ?? 4096),
+      timeout_seconds: 90,
     };
 
     try {
-      const res = await fetch(`${API_BASE}/ai-providers/${ollamaConfig.id}`, {
+      const res = await fetch(`${API_BASE}/ai-providers/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(ollamaConfig)
+        body: JSON.stringify(cfg),
       });
       if (res.ok) {
         fetchProviders();
+        closeModal();
       }
     } catch (err) {
     } finally {
-      setSaving(false);
+      setSavingId(null);
     }
   };
+
+  const modelList = modal === "groq" ? GROQ_MODELS : NVIDIA_MODELS;
 
   return (
     <main className="min-h-screen bg-background p-6 text-sm text-foreground">
@@ -110,13 +191,30 @@ export function AIProviderSettings() {
             </a>
             <h1 className="mt-2 text-2xl font-semibold">AI Provider Settings</h1>
             <p className="mt-1 max-w-2xl text-muted-foreground">
-              Manage LLM provider priority, fallbacks, local models (Ollama, LM Studio), and cloud endpoints (OpenAI, OpenRouter, Groq, Gemini, Together AI).
+              Manage LLM provider priority, fallbacks, local models (Ollama, LM Studio), and cloud
+              endpoints (Groq, Nvidia NIM, OpenAI, OpenRouter).
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <Button onClick={handleAddDefaultOllama} disabled={saving}>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Button onClick={handleAddDefaultOllama} disabled={savingId === "ollama"} variant="outline">
               <Plus className="size-4 mr-1" />
               Add Local Ollama
+            </Button>
+            <Button
+              onClick={() => openModal("groq")}
+              disabled={savingId === "groq"}
+              className="bg-[#F55036] hover:bg-[#d94328] text-white"
+            >
+              <Plus className="size-4 mr-1" />
+              Add Groq
+            </Button>
+            <Button
+              onClick={() => openModal("nvidia")}
+              disabled={savingId === "nvidia"}
+              className="bg-[#76b900] hover:bg-[#5e9200] text-white"
+            >
+              <Plus className="size-4 mr-1" />
+              Add Nvidia NIM
             </Button>
           </div>
         </header>
@@ -141,27 +239,45 @@ export function AIProviderSettings() {
             <CardContent>
               {filteredProviders.length === 0 ? (
                 <div className="py-12 text-center text-xs text-muted-foreground">
-                  No AI providers configured in PostgreSQL database. Click <strong>Add Local Ollama</strong> to create one.
+                  No AI providers configured yet. Click{" "}
+                  <strong>Add Groq</strong>, <strong>Add Nvidia NIM</strong>, or{" "}
+                  <strong>Add Local Ollama</strong> to get started — Groq and Nvidia NIM have
+                  generous free tiers.
                 </div>
               ) : (
                 <div className="flex flex-col gap-3">
                   {filteredProviders.map((provider) => (
-                    <article className="rounded-md border border-border bg-background p-4" key={provider.id}>
+                    <article
+                      className="rounded-md border border-border bg-background p-4"
+                      key={provider.id}
+                    >
                       <div className="flex items-start justify-between gap-4">
                         <div className="flex items-start gap-3">
                           <div className="grid size-10 place-items-center rounded-md bg-primary/12 text-primary">
                             <PlugZap />
                           </div>
                           <div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
                               <h2 className="font-semibold">{provider.name}</h2>
                               {provider.is_default && <Badge>Default</Badge>}
                               <Badge variant={provider.enabled ? "success" : "secondary"}>
                                 {provider.enabled ? "Enabled" : "Disabled"}
                               </Badge>
+                              {provider.kind === "groq" && (
+                                <Badge variant="outline" className="text-xs border-[#F55036] text-[#F55036]">
+                                  ☁ Groq Cloud
+                                </Badge>
+                              )}
+                              {provider.kind === "nvidia" && (
+                                <Badge variant="outline" className="text-xs border-[#76b900] text-[#76b900]">
+                                  ☁ Nvidia NIM
+                                </Badge>
+                              )}
                             </div>
                             <p className="mt-1 text-muted-foreground">
-                              {provider.kind} · model: <code className="text-primary">{provider.model}</code> · priority {provider.priority}
+                              {provider.kind} · model:{" "}
+                              <code className="text-primary">{provider.model}</code> · priority{" "}
+                              {provider.priority}
                             </p>
                           </div>
                         </div>
@@ -173,7 +289,12 @@ export function AIProviderSettings() {
                         </div>
                       </div>
                       {!provider.is_default && (
-                        <Button className="mt-4" onClick={() => setDefault(provider)} size="sm" variant="outline">
+                        <Button
+                          className="mt-4"
+                          onClick={() => setDefault(provider)}
+                          size="sm"
+                          variant="outline"
+                        >
                           Select as default
                         </Button>
                       )}
@@ -192,11 +313,12 @@ export function AIProviderSettings() {
             <CardContent>
               <div className="flex flex-col gap-3 text-xs text-muted-foreground">
                 {[
+                  "Groq Cloud — free tier, ultra-fast inference (Llama, Gemma, Mixtral)",
+                  "Nvidia NIM — free tier API endpoints (z-ai/glm-5.2, Llama, Mistral, Phi)",
                   "Ollama (local models like llama3, qwen, deepseek)",
                   "OpenAI-compatible endpoints (vLLM, LM Studio)",
-                  "OpenRouter, Groq, Together AI, Gemini",
                   "Runtime fallback chain without app restart",
-                  "Encrypted API keys & customizable temperature"
+                  "Encrypted API keys & customizable temperature",
                 ].map((item) => (
                   <div className="flex items-center gap-2" key={item}>
                     <Check className="size-4 text-emerald-500 shrink-0" />
@@ -208,6 +330,90 @@ export function AIProviderSettings() {
           </Card>
         </section>
       </div>
+
+      {/* ── Cloud Provider Quick-Add Modal ── */}
+      {modal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={(e) => e.target === e.currentTarget && closeModal()}
+        >
+          <div className="w-full max-w-md rounded-xl border border-border bg-background p-6 shadow-2xl">
+            <h2 className="mb-1 text-lg font-semibold">
+              {modal === "groq" ? "Add Groq Provider" : "Add Nvidia NIM Provider"}
+            </h2>
+            <p className="mb-5 text-xs text-muted-foreground">
+              {modal === "groq" ? (
+                <>
+                  Free API key at{" "}
+                  <a
+                    className="text-primary underline"
+                    href="https://console.groq.com/keys"
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    console.groq.com
+                  </a>{" "}
+                  — no credit card required.
+                </>
+              ) : (
+                <>
+                  Free API key at{" "}
+                  <a
+                    className="text-primary underline"
+                    href="https://build.nvidia.com"
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    build.nvidia.com
+                  </a>{" "}
+                  — free tier available.
+                </>
+              )}
+            </p>
+
+            <label className="mb-1 block text-xs font-medium text-foreground">Model</label>
+            <select
+              className="mb-4 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary"
+              value={selectedModel}
+              onChange={(e) => setSelectedModel(e.target.value)}
+            >
+              {modelList.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+
+            <label className="mb-1 block text-xs font-medium text-foreground">API Key</label>
+            <input
+              autoFocus
+              className="mb-5 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary"
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder={modal === "groq" ? "gsk_…" : "nvapi-…"}
+              type="password"
+              value={apiKey}
+            />
+
+            <div className="flex justify-end gap-3">
+              <Button onClick={closeModal} variant="outline" size="sm">
+                Cancel
+              </Button>
+              <Button
+                disabled={!apiKey.trim() || savingId === modal}
+                onClick={handleAddCloudProvider}
+                size="sm"
+                className={
+                  modal === "groq"
+                    ? "bg-[#F55036] hover:bg-[#d94328] text-white"
+                    : "bg-[#76b900] hover:bg-[#5e9200] text-white"
+                }
+              >
+                {savingId === modal ? "Saving…" : "Add Provider"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
