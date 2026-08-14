@@ -69,6 +69,8 @@ class AnalysisWorkerPipeline:
         base_ref: str,
         head_ref: str,
         ai_provider_registry: Any = None,
+        user_id: str | None = None,
+        is_ephemeral: bool = False,
     ) -> None:
         try:
             # Step 1: CLONING
@@ -190,6 +192,9 @@ class AnalysisWorkerPipeline:
                     existing_kg.nodes = [n.model_dump() for n in graph.nodes]
                     existing_kg.edges = [e.model_dump() for e in graph.edges]
                     existing_kg.health_metrics = health_dict
+                    if user_id:
+                        existing_kg.user_id = user_id
+                        existing_kg.is_ephemeral = is_ephemeral
                 else:
                     kg_row = RepoKnowledgeGraphRow(
                         repository_id=repository_id,
@@ -198,6 +203,8 @@ class AnalysisWorkerPipeline:
                         nodes=[n.model_dump() for n in graph.nodes],
                         edges=[e.model_dump() for e in graph.edges],
                         health_metrics=health_dict,
+                        user_id=user_id,
+                        is_ephemeral=is_ephemeral,
                     )
                     session.add(kg_row)
                 await session.commit()
@@ -255,6 +262,8 @@ class AnalysisWorkerPipeline:
                     graph_version="1.0.0",
                     risk_engine_version="1.0.0-deterministic",
                     ai_prompt_version="1.0.0",
+                    user_id=user_id,
+                    is_ephemeral=is_ephemeral,
                 )
                 await session.merge(analysis_row)
                 await session.commit()

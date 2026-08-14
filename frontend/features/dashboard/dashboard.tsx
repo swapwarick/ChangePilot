@@ -65,6 +65,7 @@ import { AIProviderSettings } from "@/features/providers/provider-settings";
 import { UserMenu } from "@/components/user-menu";
 import { AIProviderConfig, ChangeAnalysisResult, PolicyComparisonResult, PolicyRuleConfig, RepoKnowledgeGraph, RiskPolicy } from "@/types/api";
 import { getApiBaseUrl } from "@/lib/api-config";
+import { authHeader } from "@/lib/auth-client";
 
 const navItems = [
   { label: "Dashboard", icon: LayoutDashboard },
@@ -174,7 +175,9 @@ export function Dashboard() {
   const fetchDashboardData = async () => {
     setLoading(true);
     try {
-      const repoRes = await fetch(`${getApiBaseUrl()}/repositories`);
+      const repoRes = await fetch(`${getApiBaseUrl()}/repositories`, {
+        headers: authHeader(),
+      });
       if (repoRes.ok) {
         const repoData = await repoRes.json();
         setRepositories(repoData);
@@ -183,7 +186,9 @@ export function Dashboard() {
         }
       }
 
-      const provRes = await fetch(`${getApiBaseUrl()}/ai-providers`);
+      const provRes = await fetch(`${getApiBaseUrl()}/ai-providers`, {
+        headers: authHeader(),
+      });
       if (provRes.ok) {
         setProviders(await provRes.json());
       }
@@ -209,13 +214,17 @@ export function Dashboard() {
 
     try {
       // 2. Fetch Analyses for active repository only
-      const anlRes = await fetch(`${getApiBaseUrl()}/analysis?repository_id=${repoId}`);
+      const anlRes = await fetch(`${getApiBaseUrl()}/analysis?repository_id=${repoId}`, {
+        headers: authHeader(),
+      });
       if (anlRes.ok) {
         setAnalyses(await anlRes.json());
       }
 
       // 3. Fetch Knowledge Graph for active repository only
-      const kgRes = await fetch(`${getApiBaseUrl()}/jobs/repositories/${repoId}/knowledge-graph`);
+      const kgRes = await fetch(`${getApiBaseUrl()}/jobs/repositories/${repoId}/knowledge-graph`, {
+        headers: authHeader(),
+      });
       if (kgRes.ok) {
         setKnowledgeGraph(await kgRes.json());
       }
@@ -299,7 +308,8 @@ export function Dashboard() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: token
+          ...authHeader(),
+          ...(token ? { "X-GitHub-Token": token } : {}),
         },
         body: JSON.stringify({
           repository_url: repoUrl,

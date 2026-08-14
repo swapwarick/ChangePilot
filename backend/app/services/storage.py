@@ -55,40 +55,26 @@ async def purge_ephemeral_data(user_id: str, db: AsyncSession) -> None:
     """
     logger.info("Purging ephemeral data for guest user %s", user_id)
 
-    # Collect repository IDs owned by this user so we can cascade
-    repo_ids_result = await db.execute(
-        select(RepositoryRow.id).where(
-            RepositoryRow.user_id == user_id,
-            RepositoryRow.is_ephemeral.is_(True),
+    await db.execute(
+        delete(AnalysisRow).where(
+            AnalysisRow.user_id == user_id,
         )
     )
-    repo_ids = [r for (r,) in repo_ids_result.all()]
-
-    if repo_ids:
-        await db.execute(
-            delete(AnalysisRow).where(
-                AnalysisRow.repository_id.in_(repo_ids),
-                AnalysisRow.is_ephemeral.is_(True),
-            )
+    await db.execute(
+        delete(AnalysisJobRow).where(
+            AnalysisJobRow.user_id == user_id,
         )
-        await db.execute(
-            delete(AnalysisJobRow).where(
-                AnalysisJobRow.repository_id.in_(repo_ids),
-                AnalysisJobRow.is_ephemeral.is_(True),
-            )
+    )
+    await db.execute(
+        delete(RepoKnowledgeGraphRow).where(
+            RepoKnowledgeGraphRow.user_id == user_id,
         )
-        await db.execute(
-            delete(RepoKnowledgeGraphRow).where(
-                RepoKnowledgeGraphRow.repository_id.in_(repo_ids),
-                RepoKnowledgeGraphRow.is_ephemeral.is_(True),
-            )
+    )
+    await db.execute(
+        delete(RepositoryRow).where(
+            RepositoryRow.user_id == user_id,
         )
-        await db.execute(
-            delete(RepositoryRow).where(
-                RepositoryRow.user_id == user_id,
-                RepositoryRow.is_ephemeral.is_(True),
-            )
-        )
+    )
 
     # Delete the guest user account itself
     await db.execute(delete(UserRow).where(UserRow.id == user_id, UserRow.tier == "guest"))

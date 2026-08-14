@@ -17,16 +17,36 @@ class RepositoryRepository:
         result = await self._session.execute(select(RepositoryRow).order_by(RepositoryRow.name))
         return [self._to_schema(row) for row in result.scalars()]
 
+    async def list_by_user(self, user_id: str) -> list[RepositorySummary]:
+        result = await self._session.execute(
+            select(RepositoryRow)
+            .where(RepositoryRow.user_id == user_id)
+            .order_by(RepositoryRow.name)
+        )
+        return [self._to_schema(row) for row in result.scalars()]
+
+    async def list_anonymous(self) -> list[RepositorySummary]:
+        result = await self._session.execute(
+            select(RepositoryRow)
+            .where(RepositoryRow.user_id.is_(None))
+            .order_by(RepositoryRow.name)
+        )
+        return [self._to_schema(row) for row in result.scalars()]
+
     async def get(self, repository_id: str) -> RepositorySummary | None:
         row = await self._session.get(RepositoryRow, repository_id)
         return self._to_schema(row) if row else None
 
-    async def create(self, payload: RepositoryCreate) -> RepositorySummary:
+    async def create(
+        self, payload: RepositoryCreate, *, user_id: str | None = None, is_ephemeral: bool = False
+    ) -> RepositorySummary:
         row = RepositoryRow(
             id=payload.name.lower().replace(" ", "-"),
             name=payload.name,
             source=payload.source,
             url=str(payload.url) if payload.url else None,
+            user_id=user_id,
+            is_ephemeral=is_ephemeral,
         )
         self._session.add(row)
         await self._session.commit()

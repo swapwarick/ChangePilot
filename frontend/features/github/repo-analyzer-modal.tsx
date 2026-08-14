@@ -29,6 +29,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { GitRepositoryInfo, GitBranchInfo, GitCommitInfo } from "@/types/api";
 import { getApiBaseUrl } from "@/lib/api-config";
+import { authHeader } from "@/lib/auth-client";
 
 interface RepoAnalyzerModalProps {
   isOpen: boolean;
@@ -323,7 +324,8 @@ export function RepoAnalyzerModal({ isOpen, onClose, onJobStarted }: RepoAnalyze
       const res = await fetch(`${getApiBaseUrl()}/jobs`, {
         method: "POST",
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          ...authHeader(),
         },
         body: JSON.stringify({
           repository_url: localInfo.path,
@@ -336,7 +338,7 @@ export function RepoAnalyzerModal({ isOpen, onClose, onJobStarted }: RepoAnalyze
 
       if (res.ok) {
         const job = await res.json();
-        onJobStarted(job.id, `local-${localInfo.name}`.toLowerCase());
+        onJobStarted(job.id, job.repository_id || `local-${localInfo.name}`.toLowerCase());
         onClose();
       } else {
         const errData = await res.json();
@@ -358,7 +360,8 @@ export function RepoAnalyzerModal({ isOpen, onClose, onJobStarted }: RepoAnalyze
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: token
+          ...authHeader(),
+          ...(token ? { "X-GitHub-Token": token } : {}),
         },
         body: JSON.stringify({
           repository_url: selectedRepo.clone_url,
@@ -370,7 +373,7 @@ export function RepoAnalyzerModal({ isOpen, onClose, onJobStarted }: RepoAnalyze
       });
       if (res.ok) {
         const job = await res.json();
-        onJobStarted(job.id, `${selectedRepo.owner}-${selectedRepo.name}`.toLowerCase());
+        onJobStarted(job.id, job.repository_id || `${selectedRepo.owner}-${selectedRepo.name}`.toLowerCase());
         onClose();
       } else {
         const errData = await res.json();

@@ -10,6 +10,7 @@ from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from app.core.auth import OptionalUser
 from app.database.session import DbSession, get_session_factory
 from app.database.tables import AnalysisJobRow, RepoKnowledgeGraphRow, RepositoryRow
 from app.providers.registry import AIProviderRegistry
@@ -42,9 +43,23 @@ async def submit_analysis_job(
     payload: CreateAnalysisJobRequest,
     background_tasks: BackgroundTasks,
     db: DbSession,
-    token: str | None = Header(None, alias="Authorization"),
+    current_user: OptionalUser = None,
+    github_token: str | None = Header(None, alias="X-GitHub-Token"),
+    auth_header: str | None = Header(None, alias="Authorization"),
 ) -> AnalysisJobStatusResponse:
-    repo_id = f"{payload.owner}-{payload.repo_name}".lower()
+    # If GitHub token was passed in Authorization header instead of X-GitHub-Token
+    git_token = github_token
+    if not git_token and auth_header and not auth_header.startswith("Bearer "):
+        git_token = auth_header
+
+    user_id = current_user.id if current_user else None
+    is_ephemeral = current_user.tier == "guest" if current_user else False
+
+    if user_id:
+        repo_id = f"{user_id[:8]}-{payload.owner}-{payload.repo_name}".lower()
+    else:
+        repo_id = f"{payload.owner}-{payload.repo_name}".lower()
+
     source_kind = "local" if payload.owner == "local" or not payload.repository_url.startswith(("http://", "https://")) else "github"
 
     # Ensure repository row exists in DB
@@ -58,8 +73,14 @@ async def submit_analysis_job(
             source=source_kind,
             url=payload.repository_url,
             default_branch=payload.base_ref,
+            user_id=user_id,
+            is_ephemeral=is_ephemeral,
         )
         db.add(new_repo)
+        await db.commit()
+    elif user_id and existing_repo.user_id != user_id:
+        existing_repo.user_id = user_id
+        existing_repo.is_ephemeral = is_ephemeral
         await db.commit()
 
     # Load configured AI Providers
@@ -74,6 +95,8 @@ async def submit_analysis_job(
         status="PENDING",
         step="Queued in background pipeline",
         progress=5,
+        user_id=user_id,
+        is_ephemeral=is_ephemeral,
     )
     db.add(job_row)
     await db.commit()
@@ -84,13 +107,15 @@ async def submit_analysis_job(
         pipeline.execute_job,
         job_id=job_id,
         repository_id=repo_id,
-        token=token,
+        token=git_token,
         owner=payload.owner,
         repo_name=payload.repo_name,
         clone_url=payload.repository_url,
         base_ref=payload.base_ref,
         head_ref=payload.head_ref,
         ai_provider_registry=registry,
+        user_id=user_id,
+        is_ephemeral=is_ephemeral,
     )
 
     return AnalysisJobStatusResponse(
