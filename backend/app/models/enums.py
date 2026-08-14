@@ -34,6 +34,7 @@ class AIProviderKind(StrEnum):
     CUSTOM_REST = "custom_rest"
     GROQ = "groq"
     NVIDIA = "nvidia"
+    OPENROUTER = "openrouter"
 
 
 class AnalysisTrigger(StrEnum):
