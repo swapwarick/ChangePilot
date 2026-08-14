@@ -8,14 +8,13 @@ WORKDIR /app
 # Install system dependencies (git needed for repository cloning)
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies first (better layer caching)
-COPY pyproject.toml ./
-RUN pip install --no-cache-dir -e .
-
-# Copy application code
-COPY app ./app
+# Copy project metadata and code
+COPY pyproject.toml alembic.ini ./
 COPY alembic ./alembic
-COPY alembic.ini ./
+COPY app ./app
+
+# Install dependencies and package
+RUN pip install --no-cache-dir .
 
 EXPOSE 8000
 
