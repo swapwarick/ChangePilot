@@ -26,6 +26,22 @@ _session_factory: async_sessionmaker[AsyncSession] | None = None
 _init_lock = asyncio.Lock()
 
 
+def _sync_schema_columns(sync_conn):
+    from sqlalchemy import inspect
+    inspector = inspect(sync_conn)
+    for table_name, table in Base.metadata.tables.items():
+        if inspector.has_table(table_name):
+            existing_cols = {col["name"] for col in inspector.get_columns(table_name)}
+            for col in table.columns:
+                if col.name not in existing_cols:
+                    col_type = col.type.compile(sync_conn.dialect)
+                    try:
+                        sync_conn.execute(text(f'ALTER TABLE "{table_name}" ADD COLUMN "{col.name}" {col_type}'))
+                        logger.info("Added missing column %s.%s (%s)", table_name, col.name, col_type)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("Could not add column %s.%s: %s", table_name, col.name, exc)
+
+
 async def _init_db_engine():
     global _engine, _session_factory  # noqa: PLW0603
     if _engine is not None:
@@ -49,6 +65,7 @@ async def _init_db_engine():
             _engine = create_async_engine(pg_url, echo=settings.app_env == "development")
             async with _engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
+                await conn.run_sync(_sync_schema_columns)
             _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
             return _engine
         except Exception as exc:  # noqa: BLE001
@@ -63,6 +80,7 @@ async def _init_db_engine():
         )
         async with _engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await conn.run_sync(_sync_schema_columns)
         logger.info("Local SQLite database initialized at ./changepilot.db")
         _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
         return _engine
