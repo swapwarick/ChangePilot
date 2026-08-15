@@ -33,7 +33,8 @@ class OpenAICompatibleProvider(AIProvider):
         if seed is not None:
             payload["seed"] = seed
 
-        async with httpx.AsyncClient(timeout=self.config.timeout_seconds) as client:
+        timeout = httpx.Timeout(self.config.timeout_seconds or 30.0, connect=5.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(url, json=payload, headers=headers)
             response.raise_for_status()
             body = response.json()

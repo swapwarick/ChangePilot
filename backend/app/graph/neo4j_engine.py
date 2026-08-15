@@ -6,6 +6,7 @@ to calculate blast radius and downstream dependency fan-out.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 
@@ -44,7 +45,12 @@ class Neo4jGraphEngine:
 
     async def get_driver(self):
         if self._driver is None:
-            self._driver = AsyncGraphDatabase.driver(self._uri, auth=(self._user, self._password))
+            self._driver = AsyncGraphDatabase.driver(
+                self._uri,
+                auth=(self._user, self._password),
+                connection_timeout=2.0,
+                max_connection_lifetime=60,
+            )
         return self._driver
 
     async def close(self) -> None:
@@ -55,9 +61,9 @@ class Neo4jGraphEngine:
     async def sync_graph(self, repo_id: str, graph: DependencyGraph) -> None:
         """Syncs PostgreSQL graph snapshot into Neo4j graph nodes and edges."""
         try:
-            driver = await self.get_driver()
+            driver = await asyncio.wait_for(self.get_driver(), timeout=2.0)
             async with driver.session() as session:
-                await session.run("MATCH (n {repo_id: $repo_id}) DETACH DELETE n", repo_id=repo_id)
+                await asyncio.wait_for(session.run("MATCH (n {repo_id: $repo_id}) DETACH DELETE n", repo_id=repo_id), timeout=3.0)
 
                 nodes_payload = [
                     {
@@ -101,7 +107,7 @@ class Neo4jGraphEngine:
     ) -> BlastRadiusResult:
         """Executes Cypher variable-length path traversal or in-memory graph BFS to compute downstream blast radius."""
         try:
-            driver = await self.get_driver()
+            driver = await asyncio.wait_for(self.get_driver(), timeout=2.0)
             async with driver.session() as session:
                 query = """
                 MATCH (src:Node {repo_id: $repo_id})
@@ -113,8 +119,8 @@ class Neo4jGraphEngine:
                     collect(distinct dependent.kind) as impacted_kinds,
                     collect(distinct dependent.path) as impacted_paths
                 """
-                result = await session.run(query, repo_id=repo_id, changed_files=changed_files)
-                record = await result.single()
+                result = await asyncio.wait_for(session.run(query, repo_id=repo_id, changed_files=changed_files), timeout=3.0)
+                record = await asyncio.wait_for(result.single(), timeout=3.0)
                 if record and record["impacted_ids"]:
                     impacted_ids = record["impacted_ids"] or []
                     impacted_paths = [p for p in record["impacted_paths"] if p]

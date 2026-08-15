@@ -50,7 +50,7 @@ class AnalysisWorkerPipeline:
             job = await session.get(AnalysisJobRow, job_id)
             if job:
                 job.status = status
-                job.step = step
+                job.step = (step or "")[:250]
                 job.progress = progress
                 if error:
                     job.error = error
@@ -261,7 +261,7 @@ class AnalysisWorkerPipeline:
                     impacted_modules=impacted_modules,
                     dependency_graph=graph.model_dump(),
                     risk_score=risk_result.score,
-                    risk_level=risk_result.level.value,
+                    risk_level=risk_result.level.value if hasattr(risk_result.level, "value") else str(risk_result.level),
                     risk_confidence=risk_result.evidence_completeness,
                     evidence_completeness=risk_result.evidence_completeness,
                     is_calibrated=risk_result.is_calibrated,

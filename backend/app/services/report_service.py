@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 from app.models.ai_provider import AIMessage, AIRequest
@@ -43,23 +44,26 @@ class AIReportService:
                 "risk_breakdown_json": json.dumps(risk_breakdown_data, indent=2),
             },
         )
-        response = await self._provider_registry.generate_with_fallback(
-            AIRequest(
-                task_category="report",
-                messages=[
-                    AIMessage(
-                        role="system",
-                        content=(
-                            "You are a Principal Software Architect synthesizing a scientifically defensible change risk assessment. "
-                            "Ground all statements strictly in the supplied structured evidence. "
-                            "Never invent unreferenced files, false dependencies, or speculative facts. "
-                            "Never call files, folders, or modules 'services'. "
-                            "Never recalculate or override risk scores or evidence completeness metrics."
+        response = await asyncio.wait_for(
+            self._provider_registry.generate_with_fallback(
+                AIRequest(
+                    task_category="report",
+                    messages=[
+                        AIMessage(
+                            role="system",
+                            content=(
+                                "You are a Principal Software Architect synthesizing a scientifically defensible change risk assessment. "
+                                "Ground all statements strictly in the supplied structured evidence. "
+                                "Never invent unreferenced files, false dependencies, or speculative facts. "
+                                "Never call files, folders, or modules 'services'. "
+                                "Never recalculate or override risk scores or evidence completeness metrics."
+                            ),
                         ),
-                    ),
-                    AIMessage(role="user", content=prompt),
-                ],
-            )
+                        AIMessage(role="user", content=prompt),
+                    ],
+                )
+            ),
+            timeout=25.0,
         )
         return response.content
 
