@@ -1068,7 +1068,7 @@ export function Dashboard() {
                               {anl.changed_files.length} files changed · {anl.impacted_modules.join(", ") || "Root"}
                             </div>
                           </div>
-                          <Badge variant={levelVariant(anl.risk.level)}>{anl.risk.score.toFixed(2)}</Badge>
+                          <Badge variant={levelVariant(anl.risk.level)}>{Math.round(anl.risk.score)}/100</Badge>
                         </div>
                       ))
                     )}
@@ -1084,7 +1084,7 @@ export function Dashboard() {
                       </div>
                       {latestAnalysis && (
                         <Badge variant={levelVariant(latestAnalysis.risk.level)}>
-                          Risk: {latestAnalysis.risk.level.toUpperCase()} ({latestAnalysis.risk.score.toFixed(2)})
+                          Risk: {latestAnalysis.risk.level.toUpperCase()} ({Math.round(latestAnalysis.risk.score)}/100)
                         </Badge>
                       )}
                     </div>
@@ -1961,10 +1961,26 @@ export function Dashboard() {
           >
             <div className="flex items-center justify-between border-b pb-3">
               <div>
-                <h3 className="text-base font-semibold text-primary">{selectedRuleModal.rule}</h3>
-                <span className="text-muted-foreground uppercase text-[10px] tracking-wider">
-                  Category: {selectedRuleModal.category} • Points: +{selectedRuleModal.points}
-                </span>
+                <h3 className="text-base font-semibold text-primary">
+                  {selectedRuleModal.name || selectedRuleModal.rule}
+                </h3>
+                <span className="font-mono text-[10px] text-muted-foreground">{selectedRuleModal.rule}</span>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-muted-foreground uppercase text-[10px] tracking-wider">
+                    Category: {selectedRuleModal.category} • Points: +{selectedRuleModal.points}
+                  </span>
+                  {selectedRuleModal.recommendation_type && (
+                    <Badge variant="outline" className={`text-[10px] ${
+                      selectedRuleModal.recommendation_type === "EVIDENCE_BACKED"
+                        ? "border-sky-500 text-sky-500 bg-sky-500/10"
+                        : selectedRuleModal.recommendation_type === "POLICY_BASED"
+                        ? "border-amber-500 text-amber-500 bg-amber-500/10"
+                        : "border-muted-foreground text-muted-foreground"
+                    }`}>
+                      {selectedRuleModal.recommendation_type}
+                    </Badge>
+                  )}
+                </div>
               </div>
               <Button size="icon" variant="ghost" onClick={() => setSelectedRuleModal(null)}>
                 <X className="size-4" />

@@ -201,6 +201,7 @@ class DeterministicRiskEngine:
             risk_breakdown.append(
                 RiskBreakdownItem(
                     rule=item.rule or item.signal,
+                    name=item.name or item.rule or item.signal,
                     category=item.category,
                     points=points,
                     evidence=item.description,

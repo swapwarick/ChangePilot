@@ -38,6 +38,7 @@ class RiskEvidence(BaseModel):
 
 class RiskBreakdownItem(BaseModel):
     rule: str
+    name: str = ""  # Human-readable rule name (e.g. "Authentication Modified")
     category: str
     points: int
     evidence: str

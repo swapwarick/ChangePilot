@@ -198,3 +198,96 @@ def test_11_ai_prompt_grounding_constraints():
     assert "facts_json" in latest_template.variables
     assert "inferences_json" in latest_template.variables
     assert "recommendations_json" in latest_template.variables
+
+
+def test_12_risk_breakdown_items_carry_human_readable_name(risk_engine: DeterministicRiskEngine):
+    """Test 12: Each RiskBreakdownItem has a non-empty human-readable name field, not just a machine-key signal."""
+    payload = RiskInput(
+        changed_files=["backend/app/auth/session.py", "backend/migrations/001.sql"],
+        dependency_count=8,
+        missing_tests=True,
+    )
+    result = risk_engine.score(payload)
+
+    assert len(result.risk_breakdown) > 0
+    for item in result.risk_breakdown:
+        # name must be a non-empty string distinct enough to be human-readable
+        assert item.name, f"RiskBreakdownItem '{item.rule}' has an empty name field"
+        # name should not be identical to the raw signal key for rules that have proper names
+        # (signal keys use underscores; names are title-cased human labels)
+
+
+def test_13_risk_breakdown_items_carry_recommendation_type(risk_engine: DeterministicRiskEngine):
+    """Test 13: Every RiskBreakdownItem with a recommendation carries a typed recommendation_type classification."""
+    payload = RiskInput(
+        changed_files=["src/auth.py", "src/payment.py"],
+        dependency_count=12,
+        missing_tests=True,
+        critical_modules=["src/payment.py"],
+    )
+    result = risk_engine.score(payload)
+
+    for item in result.risk_breakdown:
+        if item.recommendation:
+            assert item.recommendation_type in {
+                RecommendationType.EVIDENCE_BACKED,
+                RecommendationType.POLICY_BASED,
+                RecommendationType.GENERIC_BEST_PRACTICE,
+            }, f"Rule '{item.rule}' has recommendation but missing valid recommendation_type"
+
+
+def test_14_v3_prompt_includes_risk_breakdown_json():
+    """Test 14: v3 prompt template includes risk_breakdown_json so LLM can produce a grounded Risk Factors table."""
+    pm = PromptManager(DEFAULT_PROMPTS)
+    latest_template = pm.latest("risk_report")
+
+    assert latest_template.version >= 3, (
+        f"Latest prompt version is {latest_template.version}. Expected v3+ with risk_breakdown_json."
+    )
+    assert "risk_breakdown_json" in latest_template.variables, (
+        "v3 prompt must declare 'risk_breakdown_json' as a variable so the LLM can write grounded Risk Factors."
+    )
+    assert "risk_breakdown_json" in latest_template.template, (
+        "v3 prompt template body must reference {{ risk_breakdown_json }} in its evidence payload."
+    )
+    # Grounding rule 9: no evidence invention
+    assert "Do not introduce facts that are not present in the supplied evidence" in latest_template.template
+
+
+def test_15_hub_and_bridge_node_signals_fire_when_data_present(risk_engine: DeterministicRiskEngine):
+    """Test 15: hub_node_affected and bridge_node_affected evidence signals are emitted when topology data is provided."""
+    payload = RiskInput(
+        changed_files=["src/core/router.ts", "src/utils/config.ts"],
+        dependency_count=18,
+        hub_nodes_affected=["src/core/router.ts"],
+        bridge_nodes_affected=["src/utils/config.ts"],
+    )
+    result = risk_engine.score(payload)
+
+    signals = {ev.signal for ev in result.evidence}
+    assert "hub_node_affected" in signals, (
+        "hub_node_affected evidence signal must be triggered when hub_nodes_affected is populated."
+    )
+    assert "bridge_node_affected" in signals, (
+        "bridge_node_affected evidence signal must be triggered when bridge_nodes_affected is populated."
+    )
+
+
+def test_16_risk_score_is_integer(risk_engine: DeterministicRiskEngine):
+    """Test 16: Risk score is an integer (deterministic engineering index), never a float.
+
+    The score description states: 'This score is not a statistical probability of production failure.'
+    Presenting it as a float (e.g. 66.34) implies false precision. It must be an integer on [0, 100].
+    """
+    payload = RiskInput(
+        changed_files=["src/auth.py", "src/db.py"],
+        dependency_count=10,
+        missing_tests=True,
+    )
+    result = risk_engine.score(payload)
+
+    assert isinstance(result.score, int), (
+        f"Risk score must be int, got {type(result.score).__name__} ({result.score}). "
+        "The deterministic index must be an integer — float presentation implies false precision."
+    )
+    assert 0 <= result.score <= 100

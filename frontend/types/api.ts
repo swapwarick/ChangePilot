@@ -145,6 +145,7 @@ export type EvidenceStatement = {
 
 export type RiskBreakdownItem = {
   rule: string;
+  name?: string;  // Human-readable rule name (e.g. "Authentication Modified")
   category: string;
   points: number;
   evidence: string;

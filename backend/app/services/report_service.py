@@ -21,6 +21,7 @@ class AIReportService:
         recommendations_data = [stmt.model_dump() for stmt in analysis.risk.recommendations]
         review_areas_data = analysis.risk.recommended_review_areas
         deployment_evidence_data = analysis.risk.deployment_considerations
+        risk_breakdown_data = [item.model_dump() for item in analysis.risk.risk_breakdown]
 
         prompt = self._prompt_manager.render(
             "risk_report",
@@ -39,6 +40,7 @@ class AIReportService:
                 "recommendations_json": json.dumps(recommendations_data, indent=2),
                 "review_areas_json": json.dumps(review_areas_data, indent=2),
                 "deployment_evidence_json": json.dumps(deployment_evidence_data, indent=2),
+                "risk_breakdown_json": json.dumps(risk_breakdown_data, indent=2),
             },
         )
         response = await self._provider_registry.generate_with_fallback(

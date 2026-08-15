@@ -226,6 +226,14 @@ class AnalysisWorkerPipeline:
                     missing_tests=not any("test" in f.lower() or "spec" in f.lower() for f in changed_files),
                     large_refactor=len(changed_files) >= 15,
                     critical_modules=critical_modules,
+                    # Graph topology evidence — hub/bridge nodes fire dedicated engine signals
+                    hub_nodes_affected=getattr(blast_radius, "hub_nodes", []),
+                    bridge_nodes_affected=getattr(blast_radius, "bridge_nodes", []),
+                    # Function-level precision from diff parsing
+                    affected_functions=getattr(blast_radius, "affected_functions", []),
+                    # Blast radius metadata
+                    blast_radius_size=getattr(blast_radius, "total_impact_size", 0),
+                    blast_radius_depth=getattr(blast_radius, "max_depth_reached", 0),
                 )
             )
 
