@@ -65,8 +65,12 @@ interface BrowseResponse {
 const RECENT_FOLDERS_KEY = "changepilot_recent_folders";
 const MAX_RECENT = 6;
 
+// Feature flag: hide local folder scanning on cloud deployments (Render, etc.)
+// Set NEXT_PUBLIC_ENABLE_LOCAL_REPO=true in .env.local for local development.
+const LOCAL_REPO_ENABLED = process.env.NEXT_PUBLIC_ENABLE_LOCAL_REPO === "true";
+
 export function RepoAnalyzerModal({ isOpen, onClose, onJobStarted }: RepoAnalyzerModalProps) {
-  const [scanMode, setScanMode] = useState<"local" | "github">("local");
+  const [scanMode, setScanMode] = useState<"local" | "github">(LOCAL_REPO_ENABLED ? "local" : "github");
 
   // Local scanning state
   const [localPath, setLocalPath] = useState<string>("");
@@ -405,25 +409,27 @@ export function RepoAnalyzerModal({ isOpen, onClose, onJobStarted }: RepoAnalyze
           <Button variant="ghost" size="sm" onClick={onClose}>✕</Button>
         </div>
 
-        {/* Tab Switcher */}
-        <div className="flex rounded-lg border border-border bg-muted/30 p-1 mb-4">
-          <button
-            onClick={() => { setScanMode("local"); setError(null); }}
-            className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-semibold rounded-md transition-all ${
-              scanMode === "local" ? "bg-background shadow-xs text-foreground" : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            <FolderCode className="size-4 text-emerald-500" /> Local Folder / Local Repo
-          </button>
-          <button
-            onClick={() => { setScanMode("github"); setError(null); }}
-            className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-semibold rounded-md transition-all ${
-              scanMode === "github" ? "bg-background shadow-xs text-foreground" : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            <Github className="size-4 text-primary" /> GitHub Cloud
-          </button>
-        </div>
+        {/* Tab Switcher — only shown when local repo feature is enabled */}
+        {LOCAL_REPO_ENABLED && (
+          <div className="flex rounded-lg border border-border bg-muted/30 p-1 mb-4">
+            <button
+              onClick={() => { setScanMode("local"); setError(null); }}
+              className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-semibold rounded-md transition-all ${
+                scanMode === "local" ? "bg-background shadow-xs text-foreground" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <FolderCode className="size-4 text-emerald-500" /> Local Folder / Local Repo
+            </button>
+            <button
+              onClick={() => { setScanMode("github"); setError(null); }}
+              className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-semibold rounded-md transition-all ${
+                scanMode === "github" ? "bg-background shadow-xs text-foreground" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Github className="size-4 text-primary" /> GitHub Cloud
+            </button>
+          </div>
+        )}
 
         {error && (
           <div className="mb-4 flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
@@ -432,8 +438,8 @@ export function RepoAnalyzerModal({ isOpen, onClose, onJobStarted }: RepoAnalyze
           </div>
         )}
 
-        {/* Local Folder / Repo Mode */}
-        {scanMode === "local" && (
+        {/* Local Folder / Repo Mode — only available in local development */}
+        {LOCAL_REPO_ENABLED && scanMode === "local" && (
           <div className="space-y-3">
             {/* Path input row */}
             <div>
