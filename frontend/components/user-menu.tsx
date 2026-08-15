@@ -8,8 +8,13 @@ import { useAuth } from "@/lib/auth-context";
 export function UserMenu() {
   const { user, isGuest, logout } = useAuth();
   const [open, setOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const router = useRouter();
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Close on outside click
   useEffect(() => {
@@ -26,7 +31,7 @@ export function UserMenu() {
     router.push("/login");
   }
 
-  if (!user) return null;
+  if (!mounted || !user) return null;
 
   const usedMB = (user.storage_used_bytes / 1_048_576).toFixed(1);
   const quotaMB = user.storage_quota_bytes > 0 ? (user.storage_quota_bytes / 1_048_576).toFixed(0) : null;
