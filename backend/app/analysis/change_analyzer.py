@@ -69,9 +69,12 @@ class ChangeAnalyzer:
         graph = self._graph_builder.from_changed_files(request.changed_files)
 
         # --- 2. Identify directly impacted modules ------------------------------------
-        impacted_modules = sorted(
-            {node.label for node in graph.nodes if node.kind in {"module", "service"}}
-        )
+        from app.analysis.module_detector import ModuleDetector
+        impacted_modules = ModuleDetector.extract_impacted_modules(request.changed_files)
+        if not impacted_modules:
+            impacted_modules = sorted(
+                {node.label for node in graph.nodes if node.kind in {"module", "service"} and node.label not in {".idea", "gradle", ".vscode"}}
+            ) or ["root"]
         critical_modules = [
             path
             for path in request.changed_files
@@ -93,7 +96,6 @@ class ChangeAnalyzer:
 
         # --- 4. Graph-enriched analysis (standard + deep) -----------------------------
         blast_radius_result = None
-        flow_result = None
 
         if detail_level in ("standard", "deep"):
             risk_input, blast_radius_result = enrich_risk_input_with_graph_analysis(
@@ -103,7 +105,7 @@ class ChangeAnalyzer:
                 run_flows=(detail_level == "deep"),
             )
             if detail_level == "deep":
-                flow_result = getattr(blast_radius_result, "_flow_result", None)
+                getattr(blast_radius_result, "_flow_result", None)
 
         # --- 5. Risk scoring ----------------------------------------------------------
         risk = self._risk_engine.score(risk_input, custom_rules=custom_rules)

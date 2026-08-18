@@ -9,7 +9,6 @@ Covers:
 - Internal vs external dependency classification
 """
 
-import pytest
 
 from app.analysis.tree_sitter_parser import ImportSymbol, ParsedFileAST
 from app.graph.knowledge_graph import KnowledgeGraphBuilder

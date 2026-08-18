@@ -1,4 +1,3 @@
-import pytest
 from app.providers.git.github import GitHubGitProvider
 from app.services.git_cli import GitCLIManager
 

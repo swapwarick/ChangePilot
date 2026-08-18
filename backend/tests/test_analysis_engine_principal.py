@@ -13,15 +13,10 @@ Verifies:
 10. GraphHealth quality auditing.
 """
 
-import pytest
 
 from app.analysis.tree_sitter_parser import (
-    ClassSymbol,
-    FunctionSymbol,
     ImportSymbol,
     ParsedFileAST,
-    PathNormalizer,
-    TreeSitterCodeParser,
     is_config_file,
     is_generated_or_vendor,
 )

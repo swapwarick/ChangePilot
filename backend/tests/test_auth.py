@@ -5,6 +5,7 @@ Run with:
     pytest tests/test_auth.py -v
 """
 import uuid
+
 from fastapi.testclient import TestClient
 
 from app.main import app

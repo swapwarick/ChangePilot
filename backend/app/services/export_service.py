@@ -581,13 +581,12 @@ class ExportService:
         """Return a professional multi-page ReportLab PDF export."""
         try:
             from reportlab.lib import colors
-            from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT, TA_RIGHT
+            from reportlab.lib.enums import TA_CENTER, TA_LEFT
             from reportlab.lib.pagesizes import A4
             from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-            from reportlab.lib.units import cm, mm
+            from reportlab.lib.units import cm
             from reportlab.platypus import (
                 HRFlowable,
-                KeepTogether,
                 PageBreak,
                 Paragraph,
                 SimpleDocTemplate,

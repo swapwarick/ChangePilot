@@ -17,7 +17,7 @@ Verifies the 12 core scientific validation criteria:
 
 import pytest
 
-from app.models.enums import RecommendationType, RiskLevel, StatementType
+from app.models.enums import RecommendationType, StatementType
 from app.models.risk import RiskInput
 from app.prompts.manager import DEFAULT_PROMPTS, PromptManager
 from app.risk.engine import DeterministicRiskEngine

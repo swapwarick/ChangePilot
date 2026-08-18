@@ -55,7 +55,7 @@ class GitHubGitProvider(GitProvider):
             resp = await client.get(url, headers=self._headers(token))
             if resp.status_code != 200:
                 raise HTTPException(status_code=resp.status_code, detail=f"Failed to list GitHub repositories: {resp.text}")
-            
+
             repos = resp.json()
             results = []
             for item in repos:
@@ -86,7 +86,7 @@ class GitHubGitProvider(GitProvider):
             resp = await client.get(url, headers=self._headers(token))
             if resp.status_code != 200:
                 raise HTTPException(status_code=resp.status_code, detail=f"Failed to list branches: {resp.text}")
-            
+
             branches = resp.json()
             return [
                 GitBranchInfo(
@@ -104,7 +104,7 @@ class GitHubGitProvider(GitProvider):
             resp = await client.get(url, headers=self._headers(token))
             if resp.status_code != 200:
                 raise HTTPException(status_code=resp.status_code, detail=f"Failed to list commits: {resp.text}")
-            
+
             commits = resp.json()
             return [
                 GitCommitInfo(
@@ -124,7 +124,7 @@ class GitHubGitProvider(GitProvider):
             resp = await client.get(url, headers=self._headers(token))
             if resp.status_code != 200:
                 raise HTTPException(status_code=resp.status_code, detail=f"Failed to list pull requests: {resp.text}")
-            
+
             prs = resp.json()
             return [
                 GitPullRequestInfo(
@@ -147,7 +147,7 @@ class GitHubGitProvider(GitProvider):
             resp = await client.get(url, headers=self._headers(token))
             if resp.status_code != 200:
                 raise HTTPException(status_code=resp.status_code, detail=f"Failed to compare commits: {resp.text}")
-            
+
             data = resp.json()
             files = [
                 {

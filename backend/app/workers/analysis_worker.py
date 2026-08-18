@@ -1,23 +1,26 @@
-"""Async Background Analysis Worker Pipeline.
+"""Async Background Analysis Worker Pipeline for ChangePilot.
 
 Executes analysis tasks out of the HTTP request loop:
 1. PENDING -> Updates job status
 2. CLONING -> Clones/fetches repo via GitCLIManager
-3. PARSING -> Parses source code with TreeSitterCodeParser & checks content hash cache
-4. BUILDING_GRAPH -> Constructs Knowledge Graph, stores Postgres snapshot, syncs Neo4j
-5. SCORING -> Calculates deterministic risk score & blast radius from Neo4j/AST evidence
+3. PARSING -> Multi-Language AST Code Parser with fail-closed error detection
+4. BUILDING_GRAPH -> Constructs Knowledge Graph, Android manifest entrypoints, stores DB snapshot
+5. SCORING -> Evaluates deterministic risk score, fail-closed quality gate & blast radius
 6. AI_REPORT -> Asynchronously generates AI explanation report
-7. COMPLETED -> Saves final result to PostgreSQL
+7. COMPLETED -> Saves final validated result to PostgreSQL
 """
 
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.analysis.module_detector import ModuleDetector
+from app.analysis.quality_gate import AnalysisQualityGate
 from app.analysis.tree_sitter_parser import (
     ImportSymbol,
     ParsedFileAST,
@@ -87,25 +90,88 @@ class AnalysisWorkerPipeline:
             diff_result = await self._git_cli.get_commit_diff(owner, repo_name, base_ref, head_ref, clone_url, token)
             changed_files = diff_result.changed_files or ["README.md"]
 
-            # Step 3: PARSING (with content hash caching)
-            await self.update_job(job_id, "PARSING", "Parsing source AST with Tree-Sitter...", 40)
-            parsed_files = []
+            # Step 3: INVENTORY & PARSING (with fail-closed quality tracking)
+            await self.update_job(job_id, "PARSING", "Parsing multi-language source AST with Tree-Sitter...", 40)
+            parsed_files: list[ParsedFileAST] = []
+            files_discovered = 0
+            supported_source_files = 0
+            files_parsed = 0
+            files_failed = 0
+            detected_languages: set[str] = set()
+
+            manifest_content: bytes | None = None
+            settings_gradle_content = ""
+
+            SUPPORTED_SOURCE_EXTS = {
+                ".kt", ".kts", ".java", ".ts", ".tsx", ".js", ".jsx",
+                ".py", ".rs", ".go", ".c", ".cpp", ".cs"
+            }
 
             async with self._session_factory() as session:
                 for file_path in worktree_dir.rglob("*"):
-                    if file_path.is_file():
-                        rel_path = file_path.relative_to(worktree_dir).as_posix()
-                        if not is_generated_or_vendor(rel_path) and self._parser.detect_language(rel_path):
-                            try:
-                                content = file_path.read_bytes()
-                                file_hash = self._parser.compute_file_hash(content)
+                    if not file_path.is_file():
+                        continue
 
-                                # Check cache
-                                cached = await session.get(FileASTCacheRow, file_hash)
-                                if not cached:
-                                    parsed = self._parser.parse_file(rel_path, content)
-                                    parsed_files.append(parsed)
-                                    # Save to cache
+                    files_discovered += 1
+                    rel_path = file_path.relative_to(worktree_dir).as_posix()
+                    ext = Path(rel_path).suffix.lower()
+                    basename = Path(rel_path).name.lower()
+
+                    if basename == "androidmanifest.xml" and not manifest_content:
+                        try:
+                            manifest_content = file_path.read_bytes()
+                        except Exception:
+                            pass
+
+                    if basename in ("settings.gradle", "settings.gradle.kts") and not settings_gradle_content:
+                        try:
+                            settings_gradle_content = file_path.read_text(encoding="utf-8", errors="ignore")
+                        except Exception:
+                            pass
+
+                    if is_generated_or_vendor(rel_path):
+                        continue
+
+                    if ext in SUPPORTED_SOURCE_EXTS:
+                        supported_source_files += 1
+
+                    lang = self._parser.detect_language(rel_path)
+                    if lang and lang not in ("config", "text"):
+                        detected_languages.add(lang)
+
+                    if lang:
+                        try:
+                            content = file_path.read_bytes()
+                            file_hash = self._parser.compute_file_hash(content)
+
+                            # Check AST cache (ensure cached language matches expected parser)
+                            cached = await session.get(FileASTCacheRow, file_hash)
+                            if cached and cached.language not in ("text", "generic") and cached.parsed_ast:
+                                ast_data = cached.parsed_ast or {}
+                                imports = [
+                                    ImportSymbol(
+                                        source_module=imp.get("source_module", ""),
+                                        imported_name=imp.get("imported_name", "*"),
+                                        alias=imp.get("alias"),
+                                        is_relative=imp.get("is_relative", False),
+                                    )
+                                    for imp in ast_data.get("imports", [])
+                                ]
+                                parsed = ParsedFileAST(
+                                    file_path=rel_path,
+                                    file_hash=file_hash,
+                                    language=cached.language,
+                                    imports=imports,
+                                    defined_classes=ast_data.get("defined_classes", []),
+                                    defined_functions=ast_data.get("defined_functions", []),
+                                    api_routes=ast_data.get("api_routes", []),
+                                )
+                            else:
+                                parsed = self._parser.parse_file(rel_path, content)
+                                if parsed.parse_status == "FAILED":
+                                    files_failed += 1
+                                    logger.error("[PARSER-FAIL] file=%s lang=%s errors=%s", rel_path, parsed.language, parsed.parse_errors)
+                                else:
                                     cache_row = FileASTCacheRow(
                                         file_hash=file_hash,
                                         file_path=rel_path,
@@ -129,37 +195,42 @@ class AnalysisWorkerPipeline:
                                         },
                                     )
                                     await session.merge(cache_row)
-                                else:
-                                    ast_data = cached.parsed_ast or {}
-                                    imports = [
-                                        ImportSymbol(
-                                            source_module=imp.get("source_module", ""),
-                                            imported_name=imp.get("imported_name", "*"),
-                                            alias=imp.get("alias"),
-                                            is_relative=imp.get("is_relative", False),
-                                        )
-                                        for imp in ast_data.get("imports", [])
-                                    ]
-                                    parsed = ParsedFileAST(
-                                        file_path=rel_path,
-                                        file_hash=file_hash,
-                                        language=cached.language,
-                                        imports=imports,
-                                        defined_classes=ast_data.get("defined_classes", []),
-                                        defined_functions=ast_data.get("defined_functions", []),
-                                        api_routes=ast_data.get("api_routes", []),
-                                    )
-                                    parsed_files.append(parsed)
-                            except Exception as exc:  # noqa: BLE001
-                                logger.warning("Error parsing %s: %s", rel_path, exc)
+
+                            if parsed.defined_classes or parsed.defined_functions or parsed.imports or len(content.strip()) <= 20:
+                                files_parsed += 1
+                            parsed_files.append(parsed)
+
+                        except Exception as exc:
+                            files_failed += 1
+                            logger.error("[PARSER-EXCEPTION] file=%s error=%s", rel_path, exc)
 
                 await session.commit()
 
             # Step 4: BUILDING_GRAPH
             await self.update_job(job_id, "BUILDING_GRAPH", "Building Repository Knowledge Graph...", 65)
-            graph, graph_hash, health_metrics = self._graph_builder.build_graph_from_parsed_files(parsed_files)
+            graph, graph_hash, health_metrics = self._graph_builder.build_graph_from_parsed_files(
+                parsed_files, manifest_content=manifest_content
+            )
 
-            # Store Knowledge Graph in DB
+            # Step 5: ANALYSIS QUALITY GATE (Fail-Closed Enforcement)
+            quality_gate = AnalysisQualityGate.evaluate(
+                files_discovered=files_discovered,
+                supported_source_files=supported_source_files,
+                files_parsed=files_parsed,
+                files_failed=files_failed,
+                ast_nodes=len(graph.nodes),
+                dependency_edges=len(graph.edges),
+                has_git_diff=True,
+                has_test_analysis=True,
+            )
+
+            # Extract genuine application modules (excluding .idea, gradle, assets)
+            gradle_modules = ModuleDetector.detect_gradle_modules(settings_gradle_content) if settings_gradle_content else []
+            impacted_modules = ModuleDetector.extract_impacted_modules(changed_files, declared_modules=gradle_modules)
+            if not impacted_modules:
+                impacted_modules = ["root"]
+
+            # Store Knowledge Graph in DB with fail-closed semantics
             async with self._session_factory() as session:
                 existing_kg_stmt = (
                     select(RepoKnowledgeGraphRow)
@@ -178,7 +249,7 @@ class AnalysisWorkerPipeline:
                         if hasattr(cat_obj, "__dict__"):
                             categories_dict[cat_name] = {
                                 "category": getattr(cat_obj, "category", cat_name),
-                                "score": getattr(cat_obj, "score", 100),
+                                "score": getattr(cat_obj, "score", 100) if quality_gate.health_status != "UNAVAILABLE" else None,
                                 "deductions": getattr(cat_obj, "deductions", 0),
                                 "evidence": getattr(cat_obj, "evidence", []),
                                 "recommendations": getattr(cat_obj, "recommendations", []),
@@ -186,17 +257,19 @@ class AnalysisWorkerPipeline:
                         elif isinstance(cat_obj, dict):
                             categories_dict[cat_name] = cat_obj
 
+                # Fail-closed health dictionary: do NOT substitute 0 findings when parsing failed
                 health_dict = {
-                    "health_score": health_metrics.health_score,
+                    "status": quality_gate.health_status,
+                    "health_score": health_metrics.health_score if quality_gate.health_status != "UNAVAILABLE" else None,
                     "total_files": health_metrics.total_files,
                     "total_classes": health_metrics.total_classes,
                     "total_functions": health_metrics.total_functions,
                     "total_dependencies": health_metrics.total_dependencies,
-                    "circular_dependencies": health_metrics.circular_dependencies,
-                    "orphan_modules": orphan_list,
-                    "potential_orphan_candidates": orphan_list,
-                    "dead_code_symbols": health_metrics.dead_code_symbols,
-                    "god_classes": health_metrics.god_classes,
+                    "circular_dependencies": health_metrics.circular_dependencies if quality_gate.health_status != "UNAVAILABLE" else None,
+                    "orphan_modules": orphan_list if quality_gate.health_status != "UNAVAILABLE" else None,
+                    "potential_orphan_candidates": orphan_list if quality_gate.health_status != "UNAVAILABLE" else None,
+                    "dead_code_symbols": health_metrics.dead_code_symbols if quality_gate.health_status != "UNAVAILABLE" else None,
+                    "god_classes": health_metrics.god_classes if quality_gate.health_status != "UNAVAILABLE" else None,
                     "high_fan_out_files": health_metrics.high_fan_out_files,
                     "high_fan_in_files": health_metrics.high_fan_in_files,
                     "test_coverage_gaps": gap_list,
@@ -204,6 +277,21 @@ class AnalysisWorkerPipeline:
                     "architectural_violations": health_metrics.architectural_violations,
                     "categories": categories_dict,
                     "coverage_notice": getattr(health_metrics, "coverage_notice", "Coverage data unavailable; test gap inferred from repository structure."),
+                    "analysis_quality": quality_gate.analysis_quality,
+                    "quality_gate": {
+                        "analysis_quality": quality_gate.analysis_quality,
+                        "graph_status": quality_gate.graph_status,
+                        "evidence_completeness": quality_gate.evidence_completeness,
+                        "health_status": quality_gate.health_status,
+                        "parser_health": quality_gate.parser_health,
+                        "diff_status": quality_gate.diff_status,
+                        "inventory_status": quality_gate.inventory_status,
+                        "blast_radius_status": quality_gate.blast_radius_status,
+                        "test_analysis_status": quality_gate.test_analysis_status,
+                        "coverage_status": quality_gate.coverage_status,
+                        "warnings": quality_gate.warnings,
+                        "explanation": quality_gate.explanation,
+                    },
                 }
 
                 if existing_kg:
@@ -233,10 +321,12 @@ class AnalysisWorkerPipeline:
             await self._neo4j.sync_graph(repository_id, graph)
             blast_radius = await self._neo4j.calculate_blast_radius(repository_id, changed_files, graph=graph)
 
-            # Step 5: SCORING (Deterministic Phase)
+            # Step 6: SCORING (Deterministic Phase)
             await self.update_job(job_id, "SCORING", "Computing deterministic risk score...", 85)
-            impacted_modules = blast_radius.impacted_modules or [f.split("/")[0] for f in changed_files if "/" in f]
-            critical_modules = [f for f in changed_files if any(m in f.lower() for m in ("auth", "db", "session", "payment", "security"))]
+            critical_modules = [
+                f for f in changed_files
+                if any(m in f.lower() for m in ("auth", "db", "session", "payment", "security"))
+            ]
 
             risk_result = self._risk_engine.score(
                 RiskInput(
@@ -246,215 +336,115 @@ class AnalysisWorkerPipeline:
                     missing_tests=not any("test" in f.lower() or "spec" in f.lower() for f in changed_files),
                     large_refactor=len(changed_files) >= 15,
                     critical_modules=critical_modules,
-                    # Graph topology evidence — hub/bridge nodes fire dedicated engine signals
                     hub_nodes_affected=getattr(blast_radius, "hub_nodes", []),
                     bridge_nodes_affected=getattr(blast_radius, "bridge_nodes", []),
-                    # Function-level precision from diff parsing
                     affected_functions=getattr(blast_radius, "affected_functions", []),
-                    # Blast radius metadata
                     blast_radius_size=getattr(blast_radius, "total_impact_size", 0),
                     blast_radius_depth=getattr(blast_radius, "max_depth_reached", 0),
                 )
             )
 
+            # Apply Quality Gate Completeness & Confidence
+            risk_result.evidence_completeness = quality_gate.evidence_completeness
+            risk_result.confidence = quality_gate.evidence_completeness
+            if quality_gate.analysis_quality != "FULL":
+                risk_result.score_description = (
+                    f"Risk score: {risk_result.score}/100 ({risk_result.level.value.upper()}) · "
+                    f"Analysis Quality: {quality_gate.analysis_quality} ({int(round(quality_gate.evidence_completeness * 100))}% evidence completeness) — {quality_gate.explanation}"
+                )
+
             # Create Analysis Record
-            analysis_id = f"anl-{job_id[:8]}"
-            analysis = ChangeAnalysisResult(
-                id=analysis_id,
+            analysis_row = AnalysisRow(
                 repository_id=repository_id,
                 trigger=AnalysisTrigger.COMMIT_COMPARISON,
+                status="completed",
+                risk_score=risk_result.score,
+                risk_level=risk_result.level.value.upper(),
+                risk_breakdown=[b.model_dump() for b in risk_result.risk_breakdown],
                 changed_files=changed_files,
                 impacted_modules=impacted_modules,
-                dependency_graph=graph,
-                risk=risk_result,
-                ai_report="AI report is generating asynchronously...",
+                dependency_graph=graph.model_dump(),
+                analysis_version="1.0.0",
+                risk_engine_version="1.0.0-deterministic",
+                parser_version="1.0.0-treesitter",
+                graph_version="1.0.0",
+                is_calibrated=risk_result.is_calibrated,
+                calibration_status=risk_result.calibration_status,
+                evidence_completeness=risk_result.evidence_completeness,
+                risk_evidence=[e.model_dump() for e in risk_result.evidence],
+                facts=[f.model_dump() for f in risk_result.facts],
+                inferences=[inf.model_dump() for inf in risk_result.inferences],
+                recommendations=[r.model_dump() for r in risk_result.recommendations],
+                potential_failure_scenarios=risk_result.potential_failure_scenarios,
+                deployment_considerations=risk_result.deployment_considerations,
+                recommended_review_areas=risk_result.recommended_review_areas,
+                epistemic_validation=risk_result.epistemic_validation.model_dump() if risk_result.epistemic_validation else {},
+                score_description=risk_result.score_description,
+                confidence=risk_result.confidence,
+                user_id=user_id,
+                is_ephemeral=is_ephemeral,
             )
 
             async with self._session_factory() as session:
-                analysis_row = AnalysisRow(
+                session.add(analysis_row)
+                await session.commit()
+                analysis_id = analysis_row.id
+
+            # Step 7: AI REPORT GENERATION (Asynchronous & Resilient)
+            ai_report_text = None
+            try:
+                if ai_provider_registry is None:
+                    async with self._session_factory() as session:
+                        config_repo = AIProviderConfigRepository(session)
+                        ai_provider_registry = AIProviderRegistry()
+                        configs = await config_repo.list_active()
+                        for cfg in configs:
+                            ai_provider_registry.register_config(cfg)
+
+                report_service = AIReportService(ai_provider_registry)
+                analysis_result_obj = ChangeAnalysisResult(
                     id=analysis_id,
                     repository_id=repository_id,
-                    trigger="commit_comparison",
-                    base_ref=base_ref,
-                    head_ref=head_ref,
+                    trigger=AnalysisTrigger.COMMIT_COMPARISON,
+                    risk=risk_result,
                     changed_files=changed_files,
                     impacted_modules=impacted_modules,
-                    dependency_graph=graph.model_dump(),
-                    risk_score=risk_result.score,
-                    risk_level=risk_result.level.value if hasattr(risk_result.level, "value") else str(risk_result.level),
-                    risk_confidence=risk_result.evidence_completeness,
-                    evidence_completeness=risk_result.evidence_completeness,
-                    is_calibrated=risk_result.is_calibrated,
-                    calibration_status=risk_result.calibration_status,
-                    risk_evidence=[e.model_dump() for e in risk_result.evidence],
-                    risk_reasons=risk_result.reasons,
-                    ai_report=analysis.ai_report,
-                    parser_version="1.0.0-treesitter",
-                    graph_version="1.0.0",
-                    risk_engine_version="1.0.0-deterministic",
-                    risk_policy_version="1.0.0",
-                    analysis_version="1.0.0",
-                    ai_prompt_version="2.0.0",
-                    user_id=user_id,
-                    is_ephemeral=is_ephemeral,
-                    # Full risk snapshot for lossless export (never re-computed)
-                    risk_full_result=risk_result.model_dump(),
+                    dependency_graph=graph,
                 )
-                await session.merge(analysis_row)
-                await session.commit()
+                ai_report_text = await report_service.generate_report(analysis_result_obj)
 
-            # Step 6: AI_REPORT (Async AI Explanation)
-            await self.update_job(job_id, "AI_REPORT", "Generating AI explanation report...", 90, analysis_id=analysis_id)
-
-            try:
-                if not ai_provider_registry:
+                if ai_report_text:
                     async with self._session_factory() as session:
-                        configs = await AIProviderConfigRepository(session).list_all()
-                        enabled_configs = [c for c in configs if c.enabled]
-                        if enabled_configs:
-                            ai_provider_registry = AIProviderRegistry(configs=enabled_configs)
-
-                if ai_provider_registry:
-                    report_service = AIReportService(provider_registry=ai_provider_registry)
-                    ai_report_text = await report_service.generate_report(analysis)
-                    async with self._session_factory() as session:
-                        row = await session.get(AnalysisRow, analysis_id)
-                        if row:
-                            row.ai_report = ai_report_text
+                        a_row = await session.get(AnalysisRow, analysis_id)
+                        if a_row:
+                            a_row.ai_report = ai_report_text
                             await session.commit()
-                else:
-                    async with self._session_factory() as session:
-                        row = await session.get(AnalysisRow, analysis_id)
-                        if row:
-                            row.ai_report = self._build_fallback_report(analysis, "No active AI provider configured.")
-                            await session.commit()
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Async AI Report generation warning (non-fatal): %s", exc)
-                async with self._session_factory() as session:
-                    row = await session.get(AnalysisRow, analysis_id)
-                    if row:
-                        row.ai_report = self._build_fallback_report(analysis, f"LLM connection unavailable ({exc}).")
-                        await session.commit()
+            except Exception as report_err:
+                logger.warning("AI Report generation notice: %s", report_err)
 
-            await self.update_job(job_id, "COMPLETED", "Analysis Completed", 100, analysis_id=analysis_id)
+            # Step 8: COMPLETE JOB
+            await self.update_job(job_id, "COMPLETED", "Analysis completed successfully.", 100, analysis_id=analysis_id)
+
+            # Pipeline Telemetry Log
+            logger.info(
+                "[PIPELINE-TRACE] repo=%s analysis=%s langs=%s files_discovered=%d supported_source=%d parsed=%d failed=%d ast_nodes=%d edges=%d graph_status=%s quality=%s completeness=%.2f health_status=%s impacted_modules=%s",
+                repository_id,
+                analysis_id,
+                list(detected_languages),
+                files_discovered,
+                supported_source_files,
+                files_parsed,
+                files_failed,
+                len(graph.nodes),
+                len(graph.edges),
+                quality_gate.graph_status,
+                quality_gate.analysis_quality,
+                quality_gate.evidence_completeness,
+                quality_gate.health_status,
+                impacted_modules,
+            )
 
         except Exception as exc:
-            logger.exception("Analysis job failed: %s", job_id)
-            await self.update_job(job_id, "FAILED", f"Error: {exc}", 0, error=str(exc))
-        finally:
-            # Clean up worktree
-            await self._git_cli.cleanup_worktree(owner, repo_name, head_ref)
-
-    @staticmethod
-    def _build_fallback_report(analysis: ChangeAnalysisResult, reason: str) -> str:
-        level_str = str(analysis.risk.level.value if hasattr(analysis.risk.level, "value") else analysis.risk.level).upper()
-        risk = analysis.risk
-        completeness_pct = int(round(risk.evidence_completeness * 100))
-
-        lines = [
-            "# Change Risk Assessment",
-            "",
-            f"> *Note: {reason} Rendered using deterministic evidence synthesis.*",
-            "",
-            "## Risk Summary",
-            f"- **Risk Score**: {risk.score}/100",
-            f"- **Risk Level**: {level_str}",
-            f"- **Evidence Completeness**: {completeness_pct}%",
-            f"- **Risk Prediction Calibration**: {risk.calibration_status}",
-            "",
-            f"*{risk.score_description}*",
-            "",
-            "## Facts",
-        ]
-        if risk.facts:
-            for fact in risk.facts:
-                lines.append(f"- **[{fact.id}]**: {fact.claim} *(Source: {fact.source_evidence})*")
-        else:
-            lines.append(f"- **[FACT-001]**: {len(analysis.changed_files)} file(s) modified in change set.")
-            if analysis.impacted_modules:
-                lines.append(f"- **[FACT-002]**: {len(analysis.impacted_modules)} architectural modules impacted.")
-
-        lines.extend([
-            "",
-            "## Impact Analysis",
-        ])
-        if risk.inferences:
-            for inf in risk.inferences:
-                lines.append(f"- **[{inf.id}]**: {inf.claim}")
-        else:
-            lines.append(f"- Transitive blast radius encompasses {len(analysis.dependency_graph.nodes)} graph nodes and {len(analysis.dependency_graph.edges)} dependency edges.")
-
-        lines.extend([
-            "",
-            "## Risk Factors",
-        ])
-        if risk.risk_breakdown:
-            lines.append("| Rule | Category | Points | Evidence | Affected Files |")
-            lines.append("| :--- | :--- | :---: | :--- | :--- |")
-            for item in sorted(risk.risk_breakdown, key=lambda x: x.points, reverse=True):
-                files_str = ", ".join(item.affected_files[:2]) + ("..." if len(item.affected_files) > 2 else "") if item.affected_files else "N/A"
-                lines.append(f"| **{item.rule}** | {item.category.title()} | +{item.points} | {item.evidence} | `{files_str}` |")
-        else:
-            for item in sorted(risk.evidence, key=lambda x: x.weight * x.score, reverse=True):
-                lines.append(f"- **{item.name or item.signal}** (+{int(round(item.weight * item.score * 100))} pts): {item.description}")
-
-        lines.extend([
-            "",
-            "## Failure Scenarios",
-        ])
-        if risk.potential_failure_scenarios:
-            for sc in risk.potential_failure_scenarios:
-                lines.append(f"- {sc}")
-        else:
-            lines.append("- **Potential Scenario**: Regressions in modified business logic may introduce unexpected errors in downstream dependent components.")
-
-        lines.extend([
-            "",
-            "## Recommended Actions",
-        ])
-        evidence_recs = [r for r in risk.recommendations if getattr(r, "recommendation_type", None) == "EVIDENCE_BACKED"]
-        policy_recs = [r for r in risk.recommendations if getattr(r, "recommendation_type", None) == "POLICY_BASED"]
-        generic_recs = [r for r in risk.recommendations if getattr(r, "recommendation_type", None) == "GENERIC_BEST_PRACTICE"]
-
-        if evidence_recs:
-            lines.append("### Evidence-Backed Recommendations")
-            for r in evidence_recs:
-                lines.append(f"- **[{r.id}]**: {r.claim}")
-        if policy_recs:
-            lines.append("### Policy-Based Recommendations")
-            for r in policy_recs:
-                lines.append(f"- **[{r.id}]**: {r.claim}")
-        if generic_recs:
-            lines.append("### Generic Best Practices")
-            for r in generic_recs:
-                lines.append(f"- **[{r.id}]**: {r.claim}")
-        if not (evidence_recs or policy_recs or generic_recs):
-            for ev in risk.evidence:
-                if ev.recommendation:
-                    lines.append(f"- {ev.recommendation}")
-
-        lines.extend([
-            "",
-            "## Reviewer / Ownership Analysis",
-        ])
-        if risk.recommended_review_areas:
-            for area in risk.recommended_review_areas:
-                reviewer = area.get("suggested_reviewer")
-                if reviewer:
-                    lines.append(f"- **Recommended review area**: `{area['review_area']}` — Suggested Reviewer: **{reviewer}** *(Evidence: {area.get('evidence', '')})*")
-                else:
-                    lines.append(f"- **Recommended review area**: `{area['review_area']}` — *{area.get('ownership_note', 'Reviewer ownership could not be determined from available repository evidence.')}*")
-        else:
-            lines.append("- Reviewer ownership could not be determined from available repository evidence.")
-
-        lines.extend([
-            "",
-            "## Deployment Considerations",
-        ])
-        if risk.deployment_considerations:
-            for dep in risk.deployment_considerations:
-                lines.append(f"- {dep}")
-        else:
-            lines.append("- These components share dependency relationships and should be tested together. Deployment topology evidence was not detected.")
-
-        return "\n".join(lines)
+            logger.exception("Analysis worker failed for job %s: %s", job_id, exc)
+            await self.update_job(job_id, "FAILED", f"Pipeline failure: {exc}", 100, error=str(exc))
+            raise

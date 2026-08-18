@@ -1,52 +1,65 @@
 export type RiskLevel = "low" | "medium" | "high" | "critical";
 
-export type PolicyRuleConfig = {
-  signal: string;
-  name: string;
-  category: string;
-  description: string;
-  weight: number;
-  enabled: boolean;
-  threshold?: string;
-  recommendation?: string;
-  path_markers?: string[];
-  extensions?: string[];
-  custom?: boolean;
-};
-
-export type RiskPolicy = {
+export type Repository = {
   id: string;
   name: string;
-  organization_id: string;
-  version: string;
-  description: string;
-  is_active: boolean;
-  rules: PolicyRuleConfig[];
-  created_at?: string;
-  updated_at?: string;
+  url?: string;
+  owner?: string;
+  default_branch: string;
+  language?: string;
+  source?: "github" | "local";
+  stars?: number;
+  open_issues?: number;
+  topics?: string[];
+  created_at: string;
+  updated_at: string;
 };
 
-export type PolicyComparisonResult = {
-  policy_a_version: string;
-  policy_b_version: string;
-  weight_changes: Array<{ signal: string; name: string; old_weight: number; new_weight: number }>;
-  status_changes: Array<{ signal: string; name: string; old_enabled: boolean; new_enabled: boolean }>;
-  added_rules: Array<{ signal: string; name: string; weight: number }>;
-  removed_rules: Array<{ signal: string; name: string; weight: number }>;
+export type RepositorySummary = {
+  id: string;
+  name: string;
+  owner?: string;
+  default_branch: string;
+  language?: string;
+  source?: "github" | "local";
+  url?: string;
+  created_at?: string;
 };
 
 export type GitRepositoryInfo = {
-  id: string;
+  id?: string;
   name: string;
   full_name: string;
   owner: string;
-  private: boolean;
-  html_url: string;
-  clone_url: string;
   default_branch: string;
+  language: string;
+  private: boolean;
+  clone_url: string;
   description?: string;
-  language?: string;
-  updated_at?: string;
+  stars_count?: number;
+};
+
+export type PullRequest = {
+  id: string;
+  number: number;
+  title: string;
+  author: string;
+  source_branch: string;
+  target_branch: string;
+  risk_level: RiskLevel;
+  risk_score: number;
+  files_changed: number;
+  impacted_components: number;
+  created_at: string;
+  is_simulated?: boolean;
+};
+
+export type Module = {
+  name: string;
+  files: number;
+  imports: number;
+  dependents: number;
+  risk_tier: RiskLevel;
 };
 
 export type GitBranchInfo = {
@@ -87,8 +100,6 @@ export type RiskEvidence = {
   threshold?: string;
 };
 
-
-
 export type GraphHealth = {
   node_count: number;
   edge_count: number;
@@ -122,6 +133,7 @@ export type GraphEdge = {
   target: string;
   relationship: string;
   edge_type?: string;
+  weight?: number;
 };
 
 export type DependencyGraph = {
@@ -145,7 +157,7 @@ export type EvidenceStatement = {
 
 export type RiskBreakdownItem = {
   rule: string;
-  name?: string;  // Human-readable rule name (e.g. "Authentication Modified")
+  name?: string;
   category: string;
   points: number;
   evidence: string;
@@ -198,30 +210,48 @@ export type ChangeAnalysisResult = {
 
 export type HealthCategoryDetail = {
   category: string;
-  score: number;
+  score: number | null;
   evidence: string[];
   deductions: number;
   recommendations: string[];
 };
 
+export type AnalysisQualityGate = {
+  analysis_quality: "FULL" | "DEGRADED" | "FAILED";
+  graph_status: "VALID" | "DEGRADED" | "FAILED" | "UNAVAILABLE";
+  evidence_completeness: number;
+  health_status: "AVAILABLE" | "DEGRADED" | "UNAVAILABLE";
+  parser_health: "PASS" | "PARTIAL" | "FAIL" | "UNAVAILABLE" | "N/A";
+  diff_status: string;
+  inventory_status: string;
+  blast_radius_status: string;
+  test_analysis_status: string;
+  coverage_status: string;
+  warnings?: string[];
+  explanation?: string;
+};
+
 export type RepoHealthMetrics = {
-  health_score?: number;
+  status?: "AVAILABLE" | "DEGRADED" | "UNAVAILABLE";
+  health_score?: number | null;
   total_files: number;
   total_classes?: number;
   total_functions?: number;
   total_dependencies?: number;
-  circular_dependencies: string[][];
-  orphan_modules?: string[];
-  potential_orphan_candidates?: string[];
-  dead_code_symbols?: string[];
-  god_classes?: string[];
+  circular_dependencies?: string[][] | null;
+  orphan_modules?: string[] | null;
+  potential_orphan_candidates?: string[] | null;
+  dead_code_symbols?: string[] | null;
+  god_classes?: string[] | null;
   high_fan_out_files?: Array<{ path: string; count: number }>;
   high_fan_in_files?: Array<{ path: string; count: number }>;
   test_coverage_gaps?: string[];
   potential_test_gaps?: string[];
-  architectural_violations: Array<{ rule: string; source: string; target: string }>;
+  architectural_violations?: Array<{ rule: string; source: string; target: string }>;
   coverage_notice?: string;
   categories?: Record<string, HealthCategoryDetail>;
+  analysis_quality?: "FULL" | "DEGRADED" | "FAILED";
+  quality_gate?: AnalysisQualityGate;
 };
 
 export type RepoKnowledgeGraph = {
@@ -253,4 +283,70 @@ export type AIProviderConfig = {
   seed?: number;
   max_tokens: number;
   timeout_seconds: number;
+};
+
+export type PolicyRuleConfig = {
+  signal: string;
+  name: string;
+  category: "security" | "database" | "architecture" | "testing" | "infrastructure" | "api";
+  weight: number;
+  threshold?: string;
+  enabled: boolean;
+  description: string;
+  recommendation: string;
+  path_markers: string[];
+  extensions: string[];
+  file_names?: string[];
+  custom?: boolean;
+};
+
+export type RiskPolicy = {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  is_active: boolean;
+  is_default: boolean;
+  rules: PolicyRuleConfig[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type PolicyComparisonResult = {
+  policy_a_id: string;
+  policy_b_id: string;
+  policy_a_name: string;
+  policy_b_name: string;
+  policy_a_version: string;
+  policy_b_version: string;
+  score_a: number;
+  score_b: number;
+  level_a: RiskLevel;
+  level_b: RiskLevel;
+  delta_score: number;
+  divergent_rules: Array<{
+    signal: string;
+    name: string;
+    points_a: number;
+    points_b: number;
+    diff: number;
+  }>;
+  weight_changes?: Array<{
+    signal: string;
+    name?: string;
+    old_weight: number;
+    new_weight: number;
+  }>;
+  status_changes?: Array<{
+    signal: string;
+    name?: string;
+    old_enabled: boolean;
+    new_enabled: boolean;
+  }>;
+  added_rules?: Array<{
+    signal: string;
+    name?: string;
+    category: string;
+    weight: number;
+  }>;
 };

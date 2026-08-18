@@ -8,6 +8,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
+import bcrypt as _bcrypt_lib
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
@@ -22,8 +23,6 @@ logger = logging.getLogger(__name__)
 # Password hashing — using bcrypt directly to avoid passlib 1.7.x + bcrypt 5.x
 # incompatibility (passlib calls detect_wrap_bug which breaks on bcrypt 5.x).
 # ---------------------------------------------------------------------------
-
-import bcrypt as _bcrypt_lib
 
 
 def hash_password(plain: str) -> str:

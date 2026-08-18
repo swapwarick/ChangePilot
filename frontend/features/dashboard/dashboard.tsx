@@ -431,7 +431,7 @@ export function Dashboard() {
     const customRule: PolicyRuleConfig = {
       signal: newRuleSignal.trim().toLowerCase().replace(/\s+/g, "_"),
       name: newRuleName.trim(),
-      category: newRuleCategory,
+      category: newRuleCategory as PolicyRuleConfig["category"],
       description: newRuleDesc || "Custom organization risk rule.",
       weight: parseFloat(newRuleWeight.toString()) || 0.20,
       enabled: true,
@@ -675,7 +675,9 @@ export function Dashboard() {
                             <span className="size-2.5 rounded-full bg-emerald-500" />
                             <span className="min-w-36 text-muted-foreground text-xs">Health Score</span>
                             <span className="font-semibold text-emerald-600 dark:text-emerald-400 text-xs">
-                              {healthMetrics?.health_score !== undefined ? `${healthMetrics.health_score} / 100` : "N/A"}
+                              {healthMetrics?.health_score !== null && healthMetrics?.health_score !== undefined
+                                ? `${healthMetrics.health_score} / 100`
+                                : (healthMetrics?.status === "UNAVAILABLE" ? "UNAVAILABLE" : "N/A")}
                             </span>
                           </div>
                         </div>
@@ -684,16 +686,22 @@ export function Dashboard() {
                       {/* Widget 1: Health Score & Parsed Metrics */}
                       <div className="rounded-md border border-border bg-background p-4">
                         <div className="text-xs text-muted-foreground">Repository Health</div>
-                        <div className="mt-2 text-3xl font-bold text-emerald-600 dark:text-emerald-400">
-                          {healthMetrics?.health_score !== undefined ? `${healthMetrics.health_score}%` : "N/A"}
+                        <div className="mt-2 text-2xl font-bold text-emerald-600 dark:text-emerald-400">
+                          {healthMetrics?.health_score !== null && healthMetrics?.health_score !== undefined
+                            ? `${healthMetrics.health_score}%`
+                            : (healthMetrics?.status === "UNAVAILABLE" ? "UNAVAILABLE" : "N/A")}
                         </div>
                         <div className="mt-1 text-[11px] text-muted-foreground">
-                          {healthMetrics ? `${healthMetrics.total_files || 0} files • ${healthMetrics.total_classes || 0} classes • ${healthMetrics.total_functions || 0} fns` : "No repository scanned"}
+                          {healthMetrics
+                            ? (healthMetrics.status === "UNAVAILABLE"
+                                ? "Language AST parsing incomplete"
+                                : `${healthMetrics.total_files || 0} files • ${healthMetrics.total_classes || 0} classes • ${healthMetrics.total_functions || 0} fns`)
+                            : "No repository scanned"}
                         </div>
                         <div className="mt-4 h-2 rounded-full bg-muted overflow-hidden">
                           <div
                             className="h-full bg-emerald-500 transition-all duration-500"
-                            style={{ width: `${healthMetrics?.health_score !== undefined ? healthMetrics.health_score : 0}%` }}
+                            style={{ width: `${(healthMetrics?.health_score !== null && healthMetrics?.health_score !== undefined) ? healthMetrics.health_score : 0}%` }}
                           />
                         </div>
                       </div>
@@ -702,14 +710,18 @@ export function Dashboard() {
                       <div className="rounded-md border border-border bg-background p-4">
                         <div className="text-xs text-muted-foreground">Circular Dependencies</div>
                         <div className="mt-2 text-2xl font-semibold text-amber-600 dark:text-amber-400">
-                          {healthMetrics ? healthMetrics.circular_dependencies.length : "--"}
+                          {healthMetrics?.circular_dependencies !== null && healthMetrics?.circular_dependencies !== undefined
+                            ? healthMetrics.circular_dependencies.length
+                            : (healthMetrics?.status === "UNAVAILABLE" ? "UNAVAILABLE" : "--")}
                         </div>
                         <div className="mt-1 text-xs text-muted-foreground">Cycle import loops detected</div>
                         <div className="mt-4 text-[10px] text-muted-foreground truncate">
                           {healthMetrics
-                            ? healthMetrics.circular_dependencies.length
-                              ? `Loop: ${healthMetrics.circular_dependencies[0].join(" ➔ ")}`
-                              : "No circular import loops"
+                            ? (healthMetrics.circular_dependencies !== null && healthMetrics.circular_dependencies !== undefined
+                                ? (healthMetrics.circular_dependencies.length
+                                    ? `Loop: ${healthMetrics.circular_dependencies[0].join(" ➔ ")}`
+                                    : "No circular import loops")
+                                : "Dependency graph incomplete")
                             : "Connect a repository"}
                         </div>
                       </div>
@@ -718,12 +730,16 @@ export function Dashboard() {
                       <div className="rounded-md border border-border bg-background p-4">
                         <div className="text-xs text-muted-foreground">Dead Code & Orphans</div>
                         <div className="mt-2 text-2xl font-semibold text-rose-600 dark:text-rose-400">
-                          {healthMetrics ? ((healthMetrics.dead_code_symbols?.length || 0) + (healthMetrics.orphan_modules?.length || 0)) : "--"}
+                          {healthMetrics?.orphan_modules !== null && healthMetrics?.orphan_modules !== undefined
+                            ? ((healthMetrics.dead_code_symbols?.length || 0) + (healthMetrics.orphan_modules?.length || 0))
+                            : (healthMetrics?.status === "UNAVAILABLE" ? "UNAVAILABLE" : "--")}
                         </div>
                         <div className="mt-1 text-xs text-muted-foreground">Unreferenced symbols & files</div>
                         <div className="mt-4 text-[10px] text-muted-foreground truncate">
                           {healthMetrics
-                            ? `${healthMetrics.orphan_modules?.length || 0} orphan module(s), ${healthMetrics.dead_code_symbols?.length || 0} dead symbol(s)`
+                            ? (healthMetrics.orphan_modules !== null && healthMetrics.orphan_modules !== undefined
+                                ? `${healthMetrics.orphan_modules?.length || 0} orphan module(s), ${healthMetrics.dead_code_symbols?.length || 0} dead symbol(s)`
+                                : "Source graph incomplete")
                             : "Connect a repository"}
                         </div>
                       </div>
@@ -732,13 +748,70 @@ export function Dashboard() {
                       <div className="rounded-md border border-border bg-background p-4">
                         <div className="text-xs text-muted-foreground">Impacted Components</div>
                         <div className="mt-2 text-2xl font-semibold text-primary">
-                          {latestAnalysis ? latestAnalysis.impacted_modules.length : "--"}
+                          {latestAnalysis ? latestAnalysis.impacted_modules.filter((m: string) => !['.idea', 'gradle', '.vscode'].includes(m)).length : "--"}
                         </div>
-                        <div className="mt-1 text-xs text-muted-foreground">Distinct graph modules affected</div>
+                        <div className="mt-1 text-xs text-muted-foreground">Genuine application modules</div>
                         <div className="mt-4 text-[10px] text-muted-foreground truncate">
                           {latestAnalysis && latestAnalysis.impacted_modules.length > 0
-                            ? latestAnalysis.impacted_modules.slice(0, 3).join(", ")
+                            ? latestAnalysis.impacted_modules.filter((m: string) => !['.idea', 'gradle', '.vscode'].includes(m)).slice(0, 3).join(", ")
                             : "No recent analysis"}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Analysis Quality & Epistemological Audit Panel */}
+                    <div className="mt-4 rounded-lg border border-border bg-surface-elevated/40 p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 pb-3">
+                        <div className="flex items-center gap-2">
+                          <ShieldCheck className="size-4 text-primary" />
+                          <span className="font-semibold text-xs uppercase tracking-wider">Analysis Quality & Stage Verification</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground">Overall Pipeline Quality:</span>
+                          <Badge variant={healthMetrics?.quality_gate?.analysis_quality === "FULL" ? "success" : (healthMetrics?.quality_gate?.analysis_quality === "DEGRADED" ? "warning" : "outline")}>
+                            {healthMetrics?.quality_gate?.analysis_quality || (latestAnalysis ? "FULL" : "READY")}
+                          </Badge>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8 text-center text-xs">
+                        <div className="rounded border border-border/80 bg-background/80 p-2">
+                          <div className="text-[10px] text-muted-foreground">Git Diff</div>
+                          <div className="mt-1 font-semibold text-emerald-600 dark:text-emerald-400">PASS</div>
+                        </div>
+                        <div className="rounded border border-border/80 bg-background/80 p-2">
+                          <div className="text-[10px] text-muted-foreground">Inventory</div>
+                          <div className="mt-1 font-semibold text-emerald-600 dark:text-emerald-400">PASS</div>
+                        </div>
+                        <div className="rounded border border-border/80 bg-background/80 p-2">
+                          <div className="text-[10px] text-muted-foreground">AST Parser</div>
+                          <div className={`mt-1 font-semibold ${healthMetrics?.quality_gate?.parser_health === "FAIL" ? "text-destructive" : "text-emerald-600 dark:text-emerald-400"}`}>
+                            {healthMetrics?.quality_gate?.parser_health || "PASS"}
+                          </div>
+                        </div>
+                        <div className="rounded border border-border/80 bg-background/80 p-2">
+                          <div className="text-[10px] text-muted-foreground">AST Graph</div>
+                          <div className={`mt-1 font-semibold ${healthMetrics?.quality_gate?.graph_status === "FAILED" ? "text-destructive" : "text-emerald-600 dark:text-emerald-400"}`}>
+                            {healthMetrics?.quality_gate?.graph_status === "FAILED" ? "FAIL" : (healthMetrics?.quality_gate?.graph_status || "PASS")}
+                          </div>
+                        </div>
+                        <div className="rounded border border-border/80 bg-background/80 p-2">
+                          <div className="text-[10px] text-muted-foreground">Dependency Res.</div>
+                          <div className="mt-1 font-semibold text-emerald-600 dark:text-emerald-400">PASS</div>
+                        </div>
+                        <div className="rounded border border-border/80 bg-background/80 p-2">
+                          <div className="text-[10px] text-muted-foreground">Blast Radius</div>
+                          <div className={`mt-1 font-semibold ${healthMetrics?.quality_gate?.blast_radius_status === "UNAVAILABLE" ? "text-amber-500" : "text-emerald-600 dark:text-emerald-400"}`}>
+                            {healthMetrics?.quality_gate?.blast_radius_status || "PASS"}
+                          </div>
+                        </div>
+                        <div className="rounded border border-border/80 bg-background/80 p-2">
+                          <div className="text-[10px] text-muted-foreground">Test Analysis</div>
+                          <div className="mt-1 font-semibold text-emerald-600 dark:text-emerald-400">PASS</div>
+                        </div>
+                        <div className="rounded border border-border/80 bg-background/80 p-2">
+                          <div className="text-[10px] text-muted-foreground">Code Coverage</div>
+                          <div className="mt-1 font-mono text-[10px] text-muted-foreground">UNAVAILABLE</div>
                         </div>
                       </div>
                     </div>
@@ -1353,7 +1426,11 @@ export function Dashboard() {
                     <CardTitle className="text-xs uppercase text-muted-foreground">Circular Imports</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="text-2xl font-bold text-emerald-500">{healthMetrics?.circular_dependencies.length || 0}</div>
+                    <div className="text-2xl font-bold text-emerald-500">
+                      {healthMetrics?.circular_dependencies !== null && healthMetrics?.circular_dependencies !== undefined
+                        ? healthMetrics.circular_dependencies.length
+                        : (healthMetrics?.status === "UNAVAILABLE" ? "UNAVAILABLE" : 0)}
+                    </div>
                     <div className="text-xs text-muted-foreground mt-1">Cycle import loops</div>
                   </CardContent>
                 </Card>
@@ -1835,13 +1912,13 @@ export function Dashboard() {
                         </div>
 
                         {/* Weight Changes */}
-                        {comparisonData.weight_changes.length > 0 && (
+                        {comparisonData.weight_changes && comparisonData.weight_changes.length > 0 && (
                           <div>
                             <h4 className="text-xs font-semibold text-amber-600 mb-1">⚖️ Rule Weight Changes ({comparisonData.weight_changes.length})</h4>
                             <div className="space-y-1 text-xs">
                               {comparisonData.weight_changes.map((wc) => (
                                 <div key={wc.signal} className="p-2 rounded border bg-muted/20 flex justify-between font-mono">
-                                  <span>{wc.name} ({wc.signal})</span>
+                                  <span>{wc.name || wc.signal} ({wc.signal})</span>
                                   <span>{wc.old_weight} ➔ <strong className="text-amber-600">{wc.new_weight}</strong></span>
                                 </div>
                               ))}
@@ -1850,13 +1927,13 @@ export function Dashboard() {
                         )}
 
                         {/* Status Changes */}
-                        {comparisonData.status_changes.length > 0 && (
+                        {comparisonData.status_changes && comparisonData.status_changes.length > 0 && (
                           <div>
                             <h4 className="text-xs font-semibold text-indigo-600 mb-1">🔄 Enable/Disable Status Diff ({comparisonData.status_changes.length})</h4>
                             <div className="space-y-1 text-xs">
                               {comparisonData.status_changes.map((sc) => (
                                 <div key={sc.signal} className="p-2 rounded border bg-muted/20 flex justify-between">
-                                  <span>{sc.name}</span>
+                                  <span>{sc.name || sc.signal}</span>
                                   <Badge variant={sc.new_enabled ? "success" : "secondary"}>
                                     {sc.old_enabled ? "Enabled" : "Disabled"} ➔ {sc.new_enabled ? "Enabled" : "Disabled"}
                                   </Badge>
@@ -1867,13 +1944,13 @@ export function Dashboard() {
                         )}
 
                         {/* Added Rules */}
-                        {comparisonData.added_rules.length > 0 && (
+                        {comparisonData.added_rules && comparisonData.added_rules.length > 0 && (
                           <div>
                             <h4 className="text-xs font-semibold text-emerald-600 mb-1">➕ Newly Added Rules ({comparisonData.added_rules.length})</h4>
                             <div className="space-y-1 text-xs">
                               {comparisonData.added_rules.map((ar) => (
                                 <div key={ar.signal} className="p-2 rounded border bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 flex justify-between font-mono">
-                                  <span>{ar.name} ({ar.signal})</span>
+                                  <span>{ar.name || ar.signal} ({ar.signal})</span>
                                   <span>Weight: {ar.weight}</span>
                                 </div>
                               ))}

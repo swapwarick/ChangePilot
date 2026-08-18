@@ -14,7 +14,7 @@ from app.risk.rules import RULES
 
 class DeterministicRiskEngine:
     """Scores risk strictly from reproducible repository evidence, normalized to a 0-100 index.
-    
+
     Adheres strictly to scientific epistemological separation:
     - FACT: Directly measured from repository / AST / Git / graph evidence.
     - INFERENCE: Deterministic conclusion derived from observed facts.

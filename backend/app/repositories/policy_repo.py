@@ -67,7 +67,7 @@ class RiskPolicyRepository:
 
     async def get_active(self) -> RiskPolicy:
         await self.seed_default_if_empty()
-        stmt = select(RiskPolicyRow).where(RiskPolicyRow.is_active == True).limit(1)
+        stmt = select(RiskPolicyRow).where(RiskPolicyRow.is_active).limit(1)
         res = await self._session.execute(stmt)
         row = res.scalar_one_or_none()
         if row:

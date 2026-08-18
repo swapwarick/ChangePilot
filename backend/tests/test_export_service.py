@@ -22,7 +22,6 @@ import json
 import zipfile
 
 import pypdf
-import pytest
 
 from app.models.analysis import ChangeAnalysisResult
 from app.models.enums import AnalysisTrigger, RecommendationType, RiskLevel, StatementType
@@ -35,8 +34,6 @@ from app.models.risk import (
     RiskEvidence,
     RiskResult,
 )
-from app.repositories.analysis_repo import AnalysisRepository
-from app.repositories.repository_repo import RepositoryRepository
 from app.services.export_service import ExportService
 
 # ---------------------------------------------------------------------------

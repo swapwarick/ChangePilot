@@ -1,6 +1,6 @@
 import pytest
-from app.database.tables import RiskPolicyRow
-from app.models.policy import PolicyRuleConfig, RiskPolicy
+
+from app.models.policy import RiskPolicy
 from app.repositories.policy_repo import RiskPolicyRepository
 
 

@@ -611,7 +611,7 @@ class TreeSitterCodeParser:
     ) -> list[ParsedFileAST]:
         """Parses repository files and performs cross-file package and import resolution."""
         parsed_files: list[ParsedFileAST] = []
-        all_file_paths = set(files.keys())
+        set(files.keys())
 
         # Build package name -> file mapping for Kotlin/Java
         package_file_map: dict[str, str] = {}

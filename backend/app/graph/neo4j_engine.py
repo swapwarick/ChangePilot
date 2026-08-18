@@ -113,7 +113,7 @@ class Neo4jGraphEngine:
                 MATCH (src:Node {repo_id: $repo_id})
                 WHERE src.path IN $changed_files OR src.id IN $changed_files
                 OPTIONAL MATCH (dependent:Node {repo_id: $repo_id})-[r:REL*1..5]->(src)
-                RETURN 
+                RETURN
                     collect(distinct dependent.id) as impacted_ids,
                     collect(distinct dependent.label) as impacted_labels,
                     collect(distinct dependent.kind) as impacted_kinds,
@@ -129,7 +129,7 @@ class Neo4jGraphEngine:
                     direct = [p for p in impacted_paths if any(c in p for c in changed_files)]
                     indirect = [p for p in impacted_paths if p not in direct and p not in changed_files]
                     affected_tests = [p for p in impacted_paths if "test" in p.lower() or "spec" in p.lower()]
-                    affected_apis = [l for l in impacted_labels if "GET" in l or "POST" in l or "PUT" in l or "DELETE" in l]
+                    affected_apis = [lbl for lbl in impacted_labels if "GET" in lbl or "POST" in lbl or "PUT" in lbl or "DELETE" in lbl]
 
                     return BlastRadiusResult(
                         changed_files=changed_files,
