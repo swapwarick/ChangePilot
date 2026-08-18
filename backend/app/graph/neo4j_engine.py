@@ -145,21 +145,39 @@ class Neo4jGraphEngine:
             logger.warning("Neo4j blast radius fallback: %s", exc)
 
         # In-Memory BFS Traversal Fallback
-        direct: set[str] = set()
-        indirect: set[str] = set()
+        direct_files: set[str] = set(changed_files)
+        indirect_files: set[str] = set()
         impacted_nodes: set[str] = set()
         affected_apis: set[str] = set()
         affected_db_models: set[str] = set()
         affected_tests: set[str] = set()
 
+        ignored_dir_markers = (
+            "node_modules/", ".git/", ".next/", "dist/", "build/",
+            "coverage/", "venv/", ".venv/", "__pycache__/", "target/"
+        )
+        valid_rels = {
+            "SOURCE_IMPORT", "DYNAMIC_IMPORT", "CALLS", "DEPENDS_ON",
+            "IMPORTS", "USES", "INHERITS", "IMPLEMENTS"
+        }
+        invalid_edge_types = {
+            "PACKAGE_DEPENDENCY", "CONFIG_REFERENCE", "BUILD_DEPENDENCY",
+            "TEST_REFERENCE", "SELF_IMPORT"
+        }
+
         if graph:
-            # Build reverse lookup: target -> source
-            reverse_adj: dict[str, list[tuple[str, str]]] = {}
+            # Build reverse lookup: target -> list of (source, relationship, edge_type)
+            reverse_adj: dict[str, list[tuple[str, str, str]]] = {}
             node_map = {n.id: n for n in graph.nodes}
             file_id_map = {n.path: n.id for n in graph.nodes if n.kind == "file" and n.path}
 
             for edge in graph.edges:
-                reverse_adj.setdefault(edge.target, []).append((edge.source, edge.relationship))
+                edge_type = getattr(edge, "edge_type", "SOURCE_IMPORT")
+                if edge_type in invalid_edge_types:
+                    continue
+                if edge.relationship not in valid_rels and edge_type not in valid_rels:
+                    continue
+                reverse_adj.setdefault(edge.target, []).append((edge.source, edge.relationship, edge_type))
 
             # Multi-hop BFS from changed files
             queue: list[tuple[str, int]] = []
@@ -175,36 +193,38 @@ class Neo4jGraphEngine:
                 curr_node = node_map.get(curr_id)
 
                 if curr_node:
+                    curr_path = (curr_node.path or "").replace("\\", "/")
+                    if curr_path and any(m in curr_path for m in ignored_dir_markers):
+                        continue
+
                     impacted_nodes.add(curr_node.id)
                     if curr_node.kind == "api":
                         affected_apis.add(curr_node.label)
                     elif curr_node.kind == "database":
                         affected_db_models.add(curr_node.label)
 
-                    if curr_node.kind == "file" and curr_node.path:
-                        if depth == 1:
-                            direct.add(curr_node.path)
-                        elif depth > 1:
-                            indirect.add(curr_node.path)
+                    if curr_node.kind in ("file", "module") and curr_node.path:
+                        if depth >= 1 and curr_node.path not in direct_files:
+                            indirect_files.add(curr_node.path)
 
                         if "test" in curr_node.path.lower() or "spec" in curr_node.path.lower():
                             affected_tests.add(curr_node.path)
 
                 if depth < 4:
-                    for src_id, _rel in reverse_adj.get(curr_id, []):
+                    for src_id, _rel, _etype in reverse_adj.get(curr_id, []):
                         if src_id not in visited:
                             visited.add(src_id)
                             queue.append((src_id, depth + 1))
 
         return BlastRadiusResult(
             changed_files=changed_files,
-            direct_impact_files=sorted(direct),
-            indirect_impact_files=sorted(indirect),
+            direct_impact_files=sorted(direct_files),
+            indirect_impact_files=sorted(indirect_files),
             impacted_nodes=sorted(impacted_nodes),
-            impacted_modules=[f.split("/")[0] for f in changed_files if "/" in f],
+            impacted_modules=sorted(set([f.split("/")[0] for f in changed_files if "/" in f] or ["root"])),
             affected_apis=sorted(affected_apis),
             affected_db_models=sorted(affected_db_models),
             affected_tests=sorted(affected_tests),
-            transitive_dependency_count=len(impacted_nodes),
+            transitive_dependency_count=len(indirect_files),
         )
 

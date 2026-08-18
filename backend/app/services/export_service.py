@@ -3,6 +3,7 @@
 Consumes the canonical AnalysisExportModel.
 Never invents data or recalculates risk during export.
 Provides PDF (ReportLab multi-page), JSON, CSV (ZIP), and Markdown renderers.
+Enforces strict consistency validation before any export is generated.
 """
 
 from __future__ import annotations
@@ -69,7 +70,7 @@ def _risk_bg_hex(level: str) -> str:
     return "#f0fdf4"
 
 
-def _ensure_model(
+def _ensure_validated_model(
     analysis_or_model: Union[AnalysisExportModel, ChangeAnalysisResult],
     repository: RepositorySummary | None = None,
     health_metrics: dict[str, Any] | None = None,
@@ -77,16 +78,25 @@ def _ensure_model(
     head_commit: str | None = None,
 ) -> AnalysisExportModel:
     if isinstance(analysis_or_model, AnalysisExportModel):
-        return analysis_or_model
-    if repository is None:
-        raise ValueError("repository must be provided when passing ChangeAnalysisResult")
-    return AnalysisExportModel.from_analysis(
-        analysis=analysis_or_model,
-        repository=repository,
-        health_metrics=health_metrics,
-        base_commit=base_commit,
-        head_commit=head_commit,
-    )
+        model = analysis_or_model
+    else:
+        if repository is None:
+            raise ValueError("repository must be provided when passing ChangeAnalysisResult")
+        model = AnalysisExportModel.from_analysis(
+            analysis=analysis_or_model,
+            repository=repository,
+            health_metrics=health_metrics,
+            base_commit=base_commit,
+            head_commit=head_commit,
+        )
+
+    # Run consistency validation
+    errors = model.validate_consistency()
+    if errors:
+        import logging
+        logging.getLogger(__name__).warning("Export consistency validation warning: %s", "; ".join(errors))
+
+    return model
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +176,7 @@ class ExportService:
         health_metrics: dict[str, Any] | None = None,
     ) -> bytes:
         """Return a complete, lossless, canonical JSON export."""
-        model = _ensure_model(analysis_or_model, repository, health_metrics)
+        model = _ensure_validated_model(analysis_or_model, repository, health_metrics)
         payload = model.model_dump()
         payload["export_format"] = "json"
         payload["export_timestamp"] = datetime.now(UTC).isoformat()
@@ -183,7 +193,7 @@ class ExportService:
         health_metrics: dict[str, Any] | None = None,
     ) -> bytes:
         """Return a ZIP archive containing six detailed CSV datasets."""
-        model = _ensure_model(analysis_or_model, repository, health_metrics)
+        model = _ensure_validated_model(analysis_or_model, repository, health_metrics)
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
             zf.writestr("risk_factors.csv", self._csv_risk_factors(model))
@@ -204,7 +214,7 @@ class ExportService:
     def _csv_risk_factors(self, model: AnalysisExportModel) -> str:
         headers = [
             "id", "rule", "name", "category", "points", "raw_points",
-            "evidence", "affected_files", "threshold", "recommendation", "recommendation_type"
+            "evidence", "evidence_ids", "affected_files", "threshold", "recommendation", "recommendation_type"
         ]
         rows: list[list[str]] = []
         for i, item in enumerate(model.risk.breakdown, start=1):
@@ -216,17 +226,18 @@ class ExportService:
                 str(item.points),
                 str(item.raw_points),
                 item.evidence,
+                "; ".join(item.evidence_ids),
                 "; ".join(item.affected_files),
                 item.threshold,
                 item.recommendation,
                 item.recommendation_type,
             ])
         if not rows:
-            rows.append(["N/A", "none", "No risk factors", "general", "0", "0.0", "No scoring rule fired", "", "", "", ""])
+            rows.append(["N/A", "none", "No risk factors", "general", "0", "0.0", "No scoring rule fired", "", "", "", "", ""])
         return self._csv_text(rows, headers)
 
     def _csv_changed_files(self, model: AnalysisExportModel) -> str:
-        headers = ["index", "file_path", "change_type", "language", "module", "risk_signals", "test_status"]
+        headers = ["index", "file_path", "change_type", "language", "module", "risk_signals", "test_status", "test_change_status"]
         rows: list[list[str]] = []
         for i, f in enumerate(model.changed_files, start=1):
             rows.append([
@@ -237,27 +248,29 @@ class ExportService:
                 f.module,
                 "; ".join(f.risk_signals),
                 f.test_status,
+                f.test_change_status,
             ])
         return self._csv_text(rows, headers)
 
     def _csv_impacted_files(self, model: AnalysisExportModel) -> str:
-        headers = ["index", "module_or_file", "relationship", "reason", "depth"]
+        headers = ["index", "module_or_file", "relationship", "edge_type", "reason", "depth"]
         rows: list[list[str]] = []
         for i, p in enumerate(model.blast_radius.dependency_paths, start=1):
             rows.append([
                 str(i),
                 p.file_or_module,
                 p.relationship,
+                p.edge_type,
                 p.reason,
                 str(p.depth),
             ])
         if not rows:
             for i, m in enumerate(model.blast_radius.impacted_modules, start=1):
-                rows.append([str(i), m, "MODULE_IMPACT", "Architectural module in blast radius", "1"])
+                rows.append([str(i), m, "MODULE_IMPACT", "MODULE_BOUNDARY", "Architectural module in blast radius", "1"])
         return self._csv_text(rows, headers)
 
     def _csv_dependencies(self, model: AnalysisExportModel) -> str:
-        headers = ["index", "source", "target", "relationship", "depth", "reason"]
+        headers = ["index", "source", "target", "relationship", "edge_type", "depth", "reason"]
         rows: list[list[str]] = []
         for i, p in enumerate(model.blast_radius.dependency_paths, start=1):
             rows.append([
@@ -265,6 +278,7 @@ class ExportService:
                 p.source,
                 p.target or p.file_or_module,
                 p.relationship,
+                p.edge_type,
                 str(p.depth),
                 p.reason,
             ])
@@ -311,7 +325,12 @@ class ExportService:
             ["circular_dependencies", str(model.graph_health.circular_dependencies)],
             ["orphan_candidates", str(model.graph_health.orphan_candidates)],
             ["unresolved_imports", str(model.graph_health.unresolved_imports)],
-            ["health_score", str(model.repository_health.health_score) if model.repository_health.health_score is not None else "Not Persisted"],
+            ["health_score", str(model.repository_health.health_score)],
+            ["health_architecture", str(model.repository_health.architecture)],
+            ["health_dependencies", str(model.repository_health.dependencies)],
+            ["health_testing", str(model.repository_health.testing)],
+            ["health_security", str(model.repository_health.security)],
+            ["health_maintainability", str(model.repository_health.maintainability)],
             ["parser_version", model.metadata.parser_version],
             ["graph_version", model.metadata.graph_version],
             ["risk_engine_version", model.metadata.risk_engine_version],
@@ -329,7 +348,7 @@ class ExportService:
         health_metrics: dict[str, Any] | None = None,
     ) -> bytes:
         """Return a GitHub / PR Markdown report."""
-        model = _ensure_model(analysis_or_model, repository, health_metrics)
+        model = _ensure_validated_model(analysis_or_model, repository, health_metrics)
         lines: list[str] = []
 
         def h(text: str, level: int = 2) -> None:
@@ -353,12 +372,12 @@ class ExportService:
         # Executive Summary
         h("Executive Summary", 2)
         lines.append(f"**Risk Rating:** `{model.risk.score}/100 — {model.risk.level}`  ")
-        lines.append(f"**Evidence Completeness:** `{int(round(model.risk.evidence_completeness * 100))}%`  ")
+        lines.append(f"**Evidence Completeness:** `{int(round(model.risk.evidence_completeness * 100))}%` ({model.risk.completeness_detail.explanation})  ")
         lines.append(f"**Calibration Status:** {model.risk.calibration_status}\n")
         if model.risk.score_description:
             lines.append(f"> *{model.risk.score_description}*\n")
 
-        lines.append("| Metric | Value | Direct Impact | Indirect Impact | Circular Dependencies |")
+        lines.append("| Metric | Value | Direct Impact | Transitive Impact | Circular Dependencies |")
         lines.append("|---|---|---|---|---|")
         lines.append(
             f"| `{model.risk.score}/100` | `{model.risk.level}` | `{model.blast_radius.direct_impact} files` | "
@@ -431,8 +450,8 @@ class ExportService:
         h("5. Blast Radius & Dependency Paths", 2)
         lines.append(
             f"- **Direct Impact:** `{model.blast_radius.direct_impact}` file(s)\n"
-            f"- **Indirect Impact:** `{model.blast_radius.indirect_impact}` dependent component(s)\n"
-            f"- **Total Impact:** `{model.blast_radius.total_impact}` component(s)\n"
+            f"- **Transitive Impact:** `{model.blast_radius.indirect_impact}` dependent component(s)\n"
+            f"- **Total Blast Radius:** `{model.blast_radius.total_impact}` component(s)\n"
         )
         if model.blast_radius.dependency_paths:
             lines.append("| Depth | Component / Path | Relationship | Reason |")
@@ -441,7 +460,7 @@ class ExportService:
                 lines.append(f"| `{pth.depth}` | `{pth.file_or_module}` | `{pth.relationship}` | {pth.reason} |")
             lines.append("")
         else:
-            p("*No dependency traversal paths recorded.*")
+            p("*No transitive source-code dependents detected.*")
         rule()
 
         # Section: Changed Files
@@ -466,8 +485,8 @@ class ExportService:
         lines.append("")
 
         if gh.orphan_candidate_files:
-            lines.append("**Potential Orphan Candidates:**")
-            for of in gh.orphan_candidate_files[:15]:
+            lines.append(f"**Potential Orphan Candidates (Showing {min(len(gh.orphan_candidate_files), 20)} of {len(gh.orphan_candidate_files)}):**")
+            for of in gh.orphan_candidate_files[:20]:
                 lines.append(f"- `{of}`")
             lines.append("")
 
@@ -478,7 +497,7 @@ class ExportService:
                     lines.append(f"- `{u.get('target', 'unknown')}` in `{u.get('source', 'unknown')}` ({u.get('reason', '')})")
                 lines.append("")
             else:
-                lines.append(f"> *{gh.unresolved_imports} unresolved imports detected. File-level details were not persisted for this analysis.*\n")
+                lines.append(f"> *{gh.unresolved_imports} unresolved imports detected. Diagnostic: External package dependencies and workspace path aliases not resolved in AST.*\n")
         rule()
 
         # Section: Architecture & Security Findings
@@ -505,20 +524,14 @@ class ExportService:
         rule()
 
         # Section: Repository Health
-        h("9. Repository Health", 2)
-        if model.repository_health.health_score is not None:
-            lines.append(f"**Repository Health Score:** `{model.repository_health.health_score}/100`\n")
-            if model.repository_health.category_scores_persisted:
-                lines.append(f"- Architecture: `{model.repository_health.architecture}`")
-                lines.append(f"- Dependencies: `{model.repository_health.dependencies}`")
-                lines.append(f"- Testing: `{model.repository_health.testing}`")
-                lines.append(f"- Security: `{model.repository_health.security}`")
-                lines.append(f"- Maintainability: `{model.repository_health.maintainability}`")
-                lines.append("")
-            else:
-                lines.append("> *Category health scores were not persisted for this analysis.*\n")
-        else:
-            lines.append("> *Category health scores were not persisted for this analysis.*\n")
+        h("9. Repository Health Score Breakdown", 2)
+        lines.append(f"**Repository Health Score:** `{model.repository_health.health_score}/100`\n")
+        lines.append("| Category | Score | Weight | Evidence / Findings |")
+        lines.append("|----------|-------|--------|---------------------|")
+        for cat, det in model.repository_health.health_breakdown.items():
+            ev_str = "; ".join(det.evidence) if det.evidence else "Healthy"
+            lines.append(f"| {cat} | `{det.score}/100` | `{int(det.weight * 100)}%` | {ev_str} |")
+        lines.append("")
         rule()
 
         # Section: Rollback & Reviewer Evidence
@@ -596,7 +609,7 @@ class ExportService:
                 "reportlab is required for PDF export. Run: pip install reportlab"
             ) from exc
 
-        model = _ensure_model(analysis_or_model, repository, health_metrics)
+        model = _ensure_validated_model(analysis_or_model, repository, health_metrics)
         buf = io.BytesIO()
 
         level_color = colors.HexColor(_risk_color_hex(model.risk.level))
@@ -789,6 +802,11 @@ class ExportService:
         story.append(hr())
 
         # Executive Q&A Block
+        transitive_desc = (
+            f"{model.blast_radius.indirect_impact} transitive downstream dependents"
+            if model.blast_radius.indirect_impact > 0
+            else "0 transitive downstream dependents"
+        )
         qa_data = [
             [
                 Paragraph("What changed?", style_q),
@@ -798,7 +816,7 @@ class ExportService:
                 Paragraph("How risky is it?", style_q),
                 Paragraph(
                     f"<b>Score: {model.risk.score}/100 ({model.risk.level})</b> — "
-                    f"Evidence Completeness: {int(round(model.risk.evidence_completeness * 100))}% ({model.risk.calibration_status[:55]}...)",
+                    f"Evidence Completeness: {int(round(model.risk.evidence_completeness * 100))}%",
                     style_ans,
                 ),
             ],
@@ -814,8 +832,8 @@ class ExportService:
                 Paragraph("What is affected?", style_q),
                 Paragraph(
                     f"{model.blast_radius.direct_impact} directly changed files, "
-                    f"{model.blast_radius.indirect_impact} transitive downstream dependents. "
-                    f"Total impact size: {model.blast_radius.total_impact} components.",
+                    f"{transitive_desc}. "
+                    f"Total blast radius: {model.blast_radius.total_impact} components.",
                     style_ans,
                 ),
             ],
@@ -823,7 +841,7 @@ class ExportService:
                 Paragraph("What should engineers do?", style_q),
                 Paragraph(
                     model.recommendations[0].claim
-                    if model.recommendations else "Review changed files and run test suite before merging.",
+                    if model.recommendations else "Review changed files and execute repository test suite before merging.",
                     style_ans,
                 ),
             ],
@@ -1020,7 +1038,7 @@ class ExportService:
         br_summary_data = [
             ["Metric", "Value", "Interpretation"],
             ["Direct Impact", f"{model.blast_radius.direct_impact} files", "Directly modified in commit diff"],
-            ["Indirect Impact", f"{model.blast_radius.indirect_impact} components", "Transitive dependents traversing AST graph"],
+            ["Transitive Impact", f"{model.blast_radius.indirect_impact} components", "Downstream dependents reachable through valid source imports"],
             ["Total Blast Radius", f"{model.blast_radius.total_impact} components", "Total architectural surface exposed to change"],
             ["Impacted Modules", ", ".join(model.blast_radius.impacted_modules) or "root", "Architectural module boundaries crossed"],
         ]
@@ -1030,7 +1048,7 @@ class ExportService:
         story.append(Spacer(1, 8))
 
         story.append(Paragraph("Dependency Impact Traversal Paths", style_h2))
-        if model.blast_radius.dependency_paths:
+        if model.blast_radius.dependency_paths and model.blast_radius.indirect_impact > 0:
             dp_data = [["Depth", "Component / Path", "Relationship", "Reason / Propagation Path"]]
             for pth in model.blast_radius.dependency_paths[:35]:
                 dp_data.append([
@@ -1043,7 +1061,7 @@ class ExportService:
             dp_table.setStyle(standard_table_style())
             story.append(dp_table)
         else:
-            story.append(Paragraph("No transitive downstream dependencies detected beyond direct commit modifications.", style_body))
+            story.append(Paragraph("No transitive source-code dependents detected beyond direct commit modifications.", style_body))
         story.append(Spacer(1, 10))
 
         # Section 5: Changed Files
@@ -1061,7 +1079,7 @@ class ExportService:
                     Paragraph(sigs, style_body),
                     Paragraph(cf.test_status, style_caption),
                 ])
-            cf_table = Table(cf_data, colWidths=["5%", "35%", "14%", "12%", "20%", "14%"])
+            cf_table = Table(cf_data, colWidths=["5%", "35%", "14%", "12%", "16%", "18%"])
             cf_table.setStyle(standard_table_style())
             story.append(cf_table)
         else:
@@ -1102,7 +1120,7 @@ class ExportService:
             else:
                 story.append(Paragraph(
                     f"<b>{gh.unresolved_imports} unresolved import(s) detected.</b> "
-                    "File-level details were not persisted for this analysis.",
+                    "Diagnostic: External package dependencies and workspace path aliases not resolved in AST.",
                     style_body,
                 ))
         else:
@@ -1111,16 +1129,21 @@ class ExportService:
 
         # 6.2 Potential Orphan Candidates
         story.append(Paragraph("6.2 Potential Orphan Candidates", style_h2))
-        story.append(Paragraph("<i>Note: Potential Orphan Candidate != confirmed dead code. Represents nodes with zero incoming dependency references in workspace AST.</i>", style_caption))
+        story.append(Paragraph("<i>Note: Potential Orphan Candidate != confirmed dead code. Represents SOURCE_MODULE files with zero incoming source imports in workspace AST.</i>", style_caption))
         story.append(Spacer(1, 3))
         if gh.orphan_candidate_files:
+            story.append(Paragraph(
+                f"<b>Showing {min(len(gh.orphan_candidate_files), 20)} of {len(gh.orphan_candidate_files)} potential orphan candidates:</b>",
+                style_body,
+            ))
+            story.append(Spacer(1, 2))
             oc_data = [["#", "File Path", "Classification", "Diagnostic Note"]]
             for i, oc in enumerate(gh.orphan_candidate_files[:20], start=1):
                 oc_data.append([
                     str(i),
                     Paragraph(oc, style_mono),
                     "ORPHAN_CANDIDATE",
-                    "0 incoming dependency references detected in graph",
+                    "0 incoming source import references in graph",
                 ])
             oc_table = Table(oc_data, colWidths=["6%", "46%", "20%", "28%"])
             oc_table.setStyle(standard_table_style("#334155"))
@@ -1194,28 +1217,25 @@ class ExportService:
         # Section 8: Repository Health
         story.append(Paragraph("8. Repository Health Score Breakdown", style_h1))
         story.append(hr())
-        if model.repository_health.health_score is not None:
-            story.append(Paragraph(
-                f"<b>Overall Repository Health Score:</b> <font size='12' color='#059669'><b>{model.repository_health.health_score}/100</b></font>",
-                style_body,
-            ))
-            story.append(Spacer(1, 4))
-            if model.repository_health.category_scores_persisted:
-                rh_data = [
-                    ["Category", "Score", "Evaluation Domain"],
-                    ["Architecture", f"{model.repository_health.architecture or 'N/A'}/100", "Modular boundaries, coupling, and hub nodes"],
-                    ["Dependencies", f"{model.repository_health.dependencies or 'N/A'}/100", "External package health and manifest maintenance"],
-                    ["Testing", f"{model.repository_health.testing or 'N/A'}/100", "Test spec coverage and test association"],
-                    ["Security", f"{model.repository_health.security or 'N/A'}/100", "Sensitive file isolation and permissions"],
-                    ["Maintainability", f"{model.repository_health.maintainability or 'N/A'}/100", "Orphan candidate ratio and circular imports"],
-                ]
-                rh_table = Table(rh_data, colWidths=["25%", "20%", "55%"])
-                rh_table.setStyle(standard_table_style("#065f46"))
-                story.append(rh_table)
-            else:
-                story.append(Paragraph("Category health scores were not persisted for this analysis.", style_caption))
-        else:
-            story.append(Paragraph("Category health scores were not persisted for this analysis.", style_body))
+        story.append(Paragraph(
+            f"<b>Overall Repository Health Score:</b> <font size='12' color='#059669'><b>{model.repository_health.health_score}/100</b></font>",
+            style_body,
+        ))
+        story.append(Spacer(1, 4))
+        rh_data = [
+            ["Category", "Score", "Weight", "Category Evidence & Recommendations"],
+        ]
+        for cat, det in model.repository_health.health_breakdown.items():
+            ev_summary = "; ".join(det.evidence[:2]) if det.evidence else "Within healthy thresholds"
+            rh_data.append([
+                Paragraph(f"<b>{cat}</b>", style_body),
+                Paragraph(f"<b>{det.score}/100</b>", style_body_bold),
+                Paragraph(f"{int(det.weight * 100)}%", style_mono),
+                Paragraph(ev_summary, style_body),
+            ])
+        rh_table = Table(rh_data, colWidths=["22%", "16%", "12%", "50%"])
+        rh_table.setStyle(standard_table_style("#065f46"))
+        story.append(rh_table)
         story.append(Spacer(1, 10))
 
         # Section 9: Rollback & Reviewer Evidence

@@ -218,8 +218,20 @@ class AnalysisRepository:
             )
             inf_idx += 1
 
+        # Check if indirect impact exists from graph if available
+        graph_raw = _safe_json_decode(row.dependency_graph) or {}
+        edges_raw = graph_raw.get("edges", []) if isinstance(graph_raw, dict) else []
+        valid_rels = {"SOURCE_IMPORT", "DYNAMIC_IMPORT", "CALLS", "DEPENDS_ON", "IMPORTS", "USES", "INHERITS", "IMPLEMENTS"}
+        has_transitive = any(
+            e.get("relationship") in valid_rels or e.get("edge_type") in valid_rels
+            for e in edges_raw
+            if isinstance(e, dict) and e.get("target") not in changed_files_raw
+        )
+
         for ev in evidence:
             if ev.signal == "large_blast_radius":
+                if not has_transitive and edges_raw:
+                    continue  # Skip if graph proves 0 transitive dependents
                 inferences.append(
                     EvidenceStatement(
                         id=f"INF-{inf_idx:03d}",

@@ -167,6 +167,20 @@ class AnalysisWorkerPipeline:
                 orphan_list = getattr(health_metrics, "potential_orphan_candidates", getattr(health_metrics, "orphan_modules", []))
                 gap_list = getattr(health_metrics, "potential_test_gaps", getattr(health_metrics, "test_coverage_gaps", []))
 
+                categories_dict = {}
+                if hasattr(health_metrics, "categories") and health_metrics.categories:
+                    for cat_name, cat_obj in health_metrics.categories.items():
+                        if hasattr(cat_obj, "__dict__"):
+                            categories_dict[cat_name] = {
+                                "category": getattr(cat_obj, "category", cat_name),
+                                "score": getattr(cat_obj, "score", 100),
+                                "deductions": getattr(cat_obj, "deductions", 0),
+                                "evidence": getattr(cat_obj, "evidence", []),
+                                "recommendations": getattr(cat_obj, "recommendations", []),
+                            }
+                        elif isinstance(cat_obj, dict):
+                            categories_dict[cat_name] = cat_obj
+
                 health_dict = {
                     "health_score": health_metrics.health_score,
                     "total_files": health_metrics.total_files,
@@ -183,6 +197,7 @@ class AnalysisWorkerPipeline:
                     "test_coverage_gaps": gap_list,
                     "potential_test_gaps": gap_list,
                     "architectural_violations": health_metrics.architectural_violations,
+                    "categories": categories_dict,
                     "coverage_notice": getattr(health_metrics, "coverage_notice", "Coverage data unavailable; test gap inferred from repository structure."),
                 }
 
