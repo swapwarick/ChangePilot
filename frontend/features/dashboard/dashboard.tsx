@@ -288,12 +288,29 @@ export function Dashboard() {
     const nodes = knowledgeGraph?.nodes || latestAnalysis?.dependency_graph?.nodes || [];
     const modMap = new Map<string, { name: string; files: number; imports: number; kind: string }>();
     nodes.forEach((n) => {
-      const modName = n.module || (n.path && n.path.includes("/") ? n.path.split("/")[0] : "root");
+      const path = (n.path || "").replace(/\\/g, "/");
+      if (path.startsWith(".idea") || path.startsWith(".gradle") || path.startsWith(".git") || path.startsWith(".vscode") || path.startsWith("gradle/")) {
+        return;
+      }
+      const parts = path.split("/").filter(Boolean);
+      const modName = n.module || (parts.length > 1 ? parts[0] : (n.kind === "module" ? n.label : "root"));
+      if (modName === ".idea" || modName === ".gradle" || modName === "gradle" || modName === ".git" || modName === ".vscode") {
+        return;
+      }
       const existing = modMap.get(modName) || { name: modName, files: 0, imports: 0, kind: n.kind };
       existing.files += 1;
       existing.imports += (n.fan_out || 0);
       modMap.set(modName, existing);
     });
+
+    if (latestAnalysis?.impacted_modules) {
+      latestAnalysis.impacted_modules.forEach((mod) => {
+        if (mod !== ".idea" && mod !== "gradle" && mod !== ".gradle" && !modMap.has(mod)) {
+          modMap.set(mod, { name: mod, files: 1, imports: 0, kind: "module" });
+        }
+      });
+    }
+
     return Array.from(modMap.values());
   }, [knowledgeGraph, latestAnalysis]);
 
@@ -1353,13 +1370,13 @@ export function Dashboard() {
             </div>
           )}
 
-          {/* TAB 4: SERVICES */}
-          {activeTab === "Services" && (
+          {/* TAB 4: MODULES */}
+          {activeTab === "Modules" && (
             <div className="space-y-4">
               <div>
-                <h1 className="text-2xl font-semibold">Architectural Services & Module Inventory</h1>
+                <h1 className="text-2xl font-semibold">Architectural Module Inventory</h1>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Discovered module boundaries, API endpoints, and architectural isolation metrics for {activeRepoId || "active repository"}.
+                  Discovered module boundaries, source components, and architectural isolation metrics for {activeRepoId || "active repository"}.
                 </p>
               </div>
 
