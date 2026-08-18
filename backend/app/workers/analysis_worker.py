@@ -277,6 +277,8 @@ class AnalysisWorkerPipeline:
                     ai_prompt_version="2.0.0",
                     user_id=user_id,
                     is_ephemeral=is_ephemeral,
+                    # Full risk snapshot for lossless export (never re-computed)
+                    risk_full_result=risk_result.model_dump(),
                 )
                 await session.merge(analysis_row)
                 await session.commit()

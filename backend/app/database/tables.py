@@ -127,6 +127,9 @@ class AnalysisRow(Base):
     user_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     is_ephemeral: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # Full risk result snapshot for lossless export (added in migration 005)
+    risk_full_result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, server_default=func.now())
 
 

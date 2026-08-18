@@ -62,6 +62,7 @@ const DependencyGraph = dynamic(
 import { RepoAnalyzerModal } from "@/features/github/repo-analyzer-modal";
 import { JobProgressBanner } from "@/features/analysis/job-progress-banner";
 import { AIProviderSettings } from "@/features/providers/provider-settings";
+import { ExportButton } from "@/features/analysis/export-button";
 import { UserMenu } from "@/components/user-menu";
 import { AIProviderConfig, ChangeAnalysisResult, PolicyComparisonResult, PolicyRuleConfig, RepoKnowledgeGraph, RiskBreakdownItem, RiskPolicy } from "@/types/api";
 import { getApiBaseUrl } from "@/lib/api-config";
@@ -830,6 +831,7 @@ export function Dashboard() {
                               <TableHead>Score</TableHead>
                               <TableHead>Level</TableHead>
                               <TableHead>Impacted Modules</TableHead>
+                              <TableHead>Export</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
@@ -843,6 +845,16 @@ export function Dashboard() {
                                 </TableCell>
                                 <TableCell className="text-xs text-muted-foreground">
                                   {anl.impacted_modules.join(", ") || "Root"}
+                                </TableCell>
+                                <TableCell>
+                                  {activeRepoId && (
+                                    <ExportButton
+                                      analysisId={anl.id}
+                                      repositoryId={activeRepoId}
+                                      repositoryName={repositories.find((r) => r.id === activeRepoId)?.name}
+                                      disabled={!anl.risk.score}
+                                    />
+                                  )}
                                 </TableCell>
                               </TableRow>
                             ))}
@@ -1082,11 +1094,21 @@ export function Dashboard() {
                         <CardTitle>Analysis Run Detail ({latestAnalysis?.id || "None"})</CardTitle>
                         <CardDescription>Changed files, evidence rules, and AI summary breakdown.</CardDescription>
                       </div>
-                      {latestAnalysis && (
-                        <Badge variant={levelVariant(latestAnalysis.risk.level)}>
-                          Risk: {latestAnalysis.risk.level.toUpperCase()} ({Math.round(latestAnalysis.risk.score)}/100)
-                        </Badge>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {latestAnalysis && (
+                          <Badge variant={levelVariant(latestAnalysis.risk.level)}>
+                            Risk: {latestAnalysis.risk.level.toUpperCase()} ({Math.round(latestAnalysis.risk.score)}/100)
+                          </Badge>
+                        )}
+                        {latestAnalysis && activeRepoId && (
+                          <ExportButton
+                            analysisId={latestAnalysis.id}
+                            repositoryId={activeRepoId}
+                            repositoryName={repositories.find((r) => r.id === activeRepoId)?.name}
+                            disabled={!latestAnalysis.risk.score}
+                          />
+                        )}
+                      </div>
                     </div>
                   </CardHeader>
                   <CardContent>
