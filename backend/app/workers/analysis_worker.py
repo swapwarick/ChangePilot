@@ -34,6 +34,7 @@ from app.models.analysis import ChangeAnalysisResult
 from app.models.enums import AnalysisTrigger
 from app.models.risk import RiskInput
 from app.providers.registry import AIProviderRegistry
+from app.repositories.analysis_repo import AnalysisRepository
 from app.repositories.provider_repo import AIProviderConfigRepository
 from app.risk.engine import DeterministicRiskEngine
 from app.services.git_cli import GitCLIManager
@@ -354,41 +355,21 @@ class AnalysisWorkerPipeline:
                 )
 
             # Create Analysis Record
-            analysis_row = AnalysisRow(
+            analysis_result_obj = ChangeAnalysisResult(
                 repository_id=repository_id,
                 trigger=AnalysisTrigger.COMMIT_COMPARISON,
-                status="completed",
-                risk_score=risk_result.score,
-                risk_level=risk_result.level.value.upper(),
-                risk_breakdown=[b.model_dump() for b in risk_result.risk_breakdown],
+                risk=risk_result,
                 changed_files=changed_files,
                 impacted_modules=impacted_modules,
-                dependency_graph=graph.model_dump(),
-                analysis_version="1.0.0",
-                risk_engine_version="1.0.0-deterministic",
-                parser_version="1.0.0-treesitter",
-                graph_version="1.0.0",
-                is_calibrated=risk_result.is_calibrated,
-                calibration_status=risk_result.calibration_status,
-                evidence_completeness=risk_result.evidence_completeness,
-                risk_evidence=[e.model_dump() for e in risk_result.evidence],
-                facts=[f.model_dump() for f in risk_result.facts],
-                inferences=[inf.model_dump() for inf in risk_result.inferences],
-                recommendations=[r.model_dump() for r in risk_result.recommendations],
-                potential_failure_scenarios=risk_result.potential_failure_scenarios,
-                deployment_considerations=risk_result.deployment_considerations,
-                recommended_review_areas=risk_result.recommended_review_areas,
-                epistemic_validation=risk_result.epistemic_validation.model_dump() if risk_result.epistemic_validation else {},
-                score_description=risk_result.score_description,
-                confidence=risk_result.confidence,
-                user_id=user_id,
-                is_ephemeral=is_ephemeral,
+                dependency_graph=graph,
             )
 
             async with self._session_factory() as session:
-                session.add(analysis_row)
-                await session.commit()
-                analysis_id = analysis_row.id
+                analysis_repo = AnalysisRepository(session)
+                saved_analysis = await analysis_repo.save(
+                    analysis_result_obj, user_id=user_id, is_ephemeral=is_ephemeral
+                )
+                analysis_id = saved_analysis.id
 
             # Step 7: AI REPORT GENERATION (Asynchronous & Resilient)
             ai_report_text = None
@@ -402,15 +383,7 @@ class AnalysisWorkerPipeline:
                             ai_provider_registry.register_config(cfg)
 
                 report_service = AIReportService(ai_provider_registry)
-                analysis_result_obj = ChangeAnalysisResult(
-                    id=analysis_id,
-                    repository_id=repository_id,
-                    trigger=AnalysisTrigger.COMMIT_COMPARISON,
-                    risk=risk_result,
-                    changed_files=changed_files,
-                    impacted_modules=impacted_modules,
-                    dependency_graph=graph,
-                )
+                analysis_result_obj.id = analysis_id
                 ai_report_text = await report_service.generate_report(analysis_result_obj)
 
                 if ai_report_text:

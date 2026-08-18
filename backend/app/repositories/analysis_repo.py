@@ -37,11 +37,16 @@ class AnalysisRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def save(self, result: ChangeAnalysisResult) -> ChangeAnalysisResult:
+    async def save(
+        self,
+        result: ChangeAnalysisResult,
+        user_id: str | None = None,
+        is_ephemeral: bool = False,
+    ) -> ChangeAnalysisResult:
         row = AnalysisRow(
             id=result.id,
             repository_id=result.repository_id,
-            trigger=result.trigger.value,
+            trigger=result.trigger.value if hasattr(result.trigger, "value") else str(result.trigger),
             changed_files=result.changed_files,
             impacted_modules=result.impacted_modules,
             dependency_graph=result.dependency_graph.model_dump(),
@@ -54,6 +59,8 @@ class AnalysisRepository:
             risk_evidence=[item.model_dump() for item in result.risk.evidence],
             risk_reasons=result.risk.reasons,
             ai_report=result.ai_report,
+            user_id=user_id,
+            is_ephemeral=is_ephemeral,
             # Persist the full risk result snapshot for lossless export
             risk_full_result=result.risk.model_dump(),
         )
