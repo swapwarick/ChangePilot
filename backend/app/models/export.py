@@ -191,7 +191,9 @@ class ExportGraphHealth(BaseModel):
     circular_dependencies: int = 0
     circular_dependency_cycles: list[list[str]] = Field(default_factory=list)
     orphan_candidates: int = 0
+    total_source_modules: int = 0
     orphan_candidate_files: list[str] = Field(default_factory=list)
+    orphan_candidate_details: list[dict[str, Any]] = Field(default_factory=list)
     unresolved_imports: int = 0
     unresolved_import_details: list[dict[str, Any]] = Field(default_factory=list)
     self_imports: int = 0
@@ -971,7 +973,9 @@ class AnalysisExportModel(BaseModel):
             circular_dependencies=gh.circular_dependency_count if gh else len(circular_raw),
             circular_dependency_cycles=circular_raw,
             orphan_candidates=gh.orphan_candidates if gh else len(orphan_candidates_raw),
+            total_source_modules=getattr(gh, "total_source_modules", 0) if gh else len(graph.nodes or []),
             orphan_candidate_files=orphan_candidates_raw,
+            orphan_candidate_details=hm.get("orphan_candidate_details", []),
             unresolved_imports=gh.unresolved_imports if gh else len(unresolved_details),
             unresolved_import_details=unresolved_details,
             self_imports=gh.self_edge_count if gh else 0,

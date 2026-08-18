@@ -270,6 +270,8 @@ class AnalysisWorkerPipeline:
                     "circular_dependencies": health_metrics.circular_dependencies if quality_gate.health_status != "UNAVAILABLE" else None,
                     "orphan_modules": orphan_list if quality_gate.health_status != "UNAVAILABLE" else None,
                     "potential_orphan_candidates": orphan_list if quality_gate.health_status != "UNAVAILABLE" else None,
+                    "total_source_modules": getattr(health_metrics, "total_source_modules", len(orphan_list)),
+                    "orphan_candidate_details": getattr(health_metrics, "orphan_candidate_details", []),
                     "dead_code_symbols": health_metrics.dead_code_symbols if quality_gate.health_status != "UNAVAILABLE" else None,
                     "god_classes": health_metrics.god_classes if quality_gate.health_status != "UNAVAILABLE" else None,
                     "high_fan_out_files": health_metrics.high_fan_out_files,

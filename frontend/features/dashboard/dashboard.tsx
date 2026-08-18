@@ -745,17 +745,26 @@ export function Dashboard() {
 
                       {/* Widget 3: Dead Code / Orphan Modules */}
                       <div className="rounded-md border border-border bg-background p-4">
-                        <div className="text-xs text-muted-foreground">Dead Code & Orphans</div>
-                        <div className="mt-2 text-2xl font-semibold text-rose-600 dark:text-rose-400">
+                        <div className="text-xs text-muted-foreground">Potential Orphan Candidates</div>
+                        <div className="mt-2 text-2xl font-semibold text-amber-600 dark:text-amber-400">
                           {healthMetrics?.orphan_modules !== null && healthMetrics?.orphan_modules !== undefined
-                            ? ((healthMetrics.dead_code_symbols?.length || 0) + (healthMetrics.orphan_modules?.length || 0))
+                            ? (
+                              <span>
+                                {healthMetrics.orphan_modules.length}
+                                <span className="text-sm font-normal text-muted-foreground ml-1">
+                                  / {healthMetrics.total_source_modules ?? healthMetrics.orphan_modules.length}
+                                </span>
+                              </span>
+                            )
                             : (healthMetrics?.status === "UNAVAILABLE" ? "UNAVAILABLE" : "--")}
                         </div>
-                        <div className="mt-1 text-xs text-muted-foreground">Unreferenced symbols & files</div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          Potential Orphan Candidates: {healthMetrics?.orphan_modules?.length || 0} / {healthMetrics?.total_source_modules ?? (healthMetrics?.orphan_modules?.length || 0)} source modules
+                        </div>
                         <div className="mt-4 text-[10px] text-muted-foreground truncate">
                           {healthMetrics
                             ? (healthMetrics.orphan_modules !== null && healthMetrics.orphan_modules !== undefined
-                                ? `${healthMetrics.orphan_modules?.length || 0} orphan module(s), ${healthMetrics.dead_code_symbols?.length || 0} dead symbol(s)`
+                                ? `${healthMetrics.orphan_modules?.length || 0} candidate(s) (Candidate != Dead Code)`
                                 : "Source graph incomplete")
                             : "Connect a repository"}
                         </div>
@@ -1457,10 +1466,13 @@ export function Dashboard() {
                     <CardTitle className="text-xs uppercase text-muted-foreground">Potential Orphan Candidates</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="text-2xl font-bold text-warning">
+                    <div className="text-2xl font-bold text-amber-500">
                       {healthMetrics?.potential_orphan_candidates?.length ?? healthMetrics?.orphan_modules?.length ?? 0}
+                      <span className="text-sm font-normal text-muted-foreground ml-1">
+                        / {healthMetrics?.total_source_modules ?? (healthMetrics?.potential_orphan_candidates?.length || 0)}
+                      </span>
                     </div>
-                    <div className="text-xs text-muted-foreground mt-1">Unreferenced source files</div>
+                    <div className="text-xs text-muted-foreground mt-1">Source modules with 0 incoming imports</div>
                   </CardContent>
                 </Card>
 
@@ -1480,17 +1492,65 @@ export function Dashboard() {
               <div className="grid gap-4 lg:grid-cols-2">
                 <Card>
                   <CardHeader>
-                    <CardTitle>Potential Orphan Candidates (Unreferenced Source Files)</CardTitle>
-                    <CardDescription>Source files that are not imported by any other module in the codebase.</CardDescription>
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <CardTitle>Potential Orphan Candidates</CardTitle>
+                        <CardDescription>
+                          Potential Orphan Candidates: {healthMetrics?.potential_orphan_candidates?.length ?? healthMetrics?.orphan_modules?.length ?? 0} / {healthMetrics?.total_source_modules ?? (healthMetrics?.potential_orphan_candidates?.length || 0)} source modules
+                        </CardDescription>
+                      </div>
+                      <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                        Candidate != Dead Code
+                      </Badge>
+                    </div>
                   </CardHeader>
                   <CardContent>
-                    <div className="max-h-64 overflow-y-auto space-y-1 text-xs font-mono">
-                      {(healthMetrics?.potential_orphan_candidates || healthMetrics?.orphan_modules || []).map((item, idx) => (
-                        <div key={idx} className="p-2 rounded border border-border bg-background flex items-center justify-between">
-                          <span className="truncate">{item}</span>
-                          <Badge variant="outline">Orphan</Badge>
+                    <div className="rounded-md border border-border/60 bg-muted/20 p-2.5 mb-3 text-[11px] text-muted-foreground flex items-center gap-2">
+                      <AlertTriangle className="size-3.5 text-amber-500 shrink-0" />
+                      <span>
+                        <strong>Important Diagnostic:</strong> A Potential Orphan Candidate is a genuine <code>SOURCE_MODULE</code> with 0 internal incoming imports in the AST. It is not confirmed dead code.
+                      </span>
+                    </div>
+
+                    <div className="max-h-64 overflow-y-auto space-y-2 text-xs">
+                      {(healthMetrics?.orphan_candidate_details && healthMetrics.orphan_candidate_details.length > 0) ? (
+                        healthMetrics.orphan_candidate_details.map((detail, idx) => (
+                          <div key={idx} className="p-2.5 rounded border border-border bg-background space-y-1.5">
+                            <div className="flex items-center justify-between font-mono text-xs">
+                              <span className="font-semibold text-foreground truncate max-w-[70%]" title={detail.path}>{detail.path}</span>
+                              <Badge variant="outline" className="text-[10px] uppercase font-mono">{detail.classification || "SOURCE_MODULE"}</Badge>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
+                              <div>Incoming Imports: <span className="font-mono text-foreground font-semibold">{detail.incoming_imports}</span></div>
+                              <div>Outgoing Imports: <span className="font-mono text-foreground font-semibold">{detail.outgoing_imports}</span></div>
+                            </div>
+                            <div className="text-[10px] text-muted-foreground italic">
+                              {detail.reason || "SOURCE_MODULE with 0 incoming source imports from internal workspace graph"}
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        (healthMetrics?.potential_orphan_candidates || healthMetrics?.orphan_modules || []).map((item, idx) => (
+                          <div key={idx} className="p-2.5 rounded border border-border bg-background space-y-1.5">
+                            <div className="flex items-center justify-between font-mono text-xs">
+                              <span className="font-semibold text-foreground truncate max-w-[70%]" title={item}>{item}</span>
+                              <Badge variant="outline" className="text-[10px] uppercase font-mono">SOURCE_MODULE</Badge>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
+                              <div>Incoming Imports: <span className="font-mono text-foreground font-semibold">0</span></div>
+                              <div>Outgoing Imports: <span className="font-mono text-foreground font-semibold">0</span></div>
+                            </div>
+                            <div className="text-[10px] text-muted-foreground italic">
+                              SOURCE_MODULE with 0 incoming source imports from internal workspace graph
+                            </div>
+                          </div>
+                        ))
+                      )}
+                      {(!healthMetrics?.potential_orphan_candidates || healthMetrics.potential_orphan_candidates.length === 0) && (
+                        <div className="py-8 text-center text-xs text-muted-foreground">
+                          No orphan candidate source modules detected. All source files have active inbound dependencies.
                         </div>
-                      ))}
+                      )}
                     </div>
                   </CardContent>
                 </Card>

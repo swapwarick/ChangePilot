@@ -9,6 +9,7 @@ class GraphHealth(BaseModel):
     unresolved_imports: int = 0
     circular_dependency_count: int = 0
     orphan_candidates: int = 0
+    total_source_modules: int = 0
     invalid_paths: int = 0
     warnings: list[str] = Field(default_factory=list)
 

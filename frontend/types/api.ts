@@ -100,6 +100,14 @@ export type RiskEvidence = {
   threshold?: string;
 };
 
+export type OrphanCandidateDetail = {
+  path: string;
+  classification: string;
+  incoming_imports: number;
+  outgoing_imports: number;
+  reason: string;
+};
+
 export type GraphHealth = {
   node_count: number;
   edge_count: number;
@@ -108,6 +116,8 @@ export type GraphHealth = {
   unresolved_imports: number;
   circular_dependency_count: number;
   orphan_candidates: number;
+  total_source_modules?: number;
+  orphan_candidate_details?: OrphanCandidateDetail[];
   invalid_paths: number;
   warnings: string[];
 };
@@ -241,6 +251,8 @@ export type RepoHealthMetrics = {
   circular_dependencies?: string[][] | null;
   orphan_modules?: string[] | null;
   potential_orphan_candidates?: string[] | null;
+  total_source_modules?: number | null;
+  orphan_candidate_details?: OrphanCandidateDetail[] | null;
   dead_code_symbols?: string[] | null;
   god_classes?: string[] | null;
   high_fan_out_files?: Array<{ path: string; count: number }>;

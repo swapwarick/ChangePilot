@@ -13,6 +13,10 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.analysis.file_classifier import (
+    classify_file as primary_classify_file,
+    extract_package_json_entrypoints,
+)
 from app.analysis.manifest_parser import AndroidManifestParser
 from app.analysis.tree_sitter_parser import (
     ParsedFileAST,
@@ -42,6 +46,8 @@ class RepoHealthMetrics:
     total_dependencies: int = 0
     circular_dependencies: list[list[str]] = field(default_factory=list)
     potential_orphan_candidates: list[str] = field(default_factory=list)
+    total_source_modules: int = 0
+    orphan_candidate_details: list[dict[str, Any]] = field(default_factory=list)
     dead_code_symbols: list[str] = field(default_factory=list)
     god_classes: list[str] = field(default_factory=list)
     high_fan_out_files: list[dict[str, Any]] = field(default_factory=list)
@@ -67,44 +73,16 @@ def classify_file(
     file_path: str,
     framework_signals: list[str] | None = None,
     android_entrypoints: set[str] | None = None,
-) -> str:
-    norm = file_path.replace("\\", "/").lower()
-    filename = norm.split("/")[-1]
-    stem = filename.split(".")[0]
-
-    if is_config_file(file_path):
-        return FileClassification.CONFIGURATION
-
-    if any(t in norm for t in ("test", "spec", "__tests__", "androidtest")):
-        return FileClassification.TEST
-
-    # Android Manifest and Framework Entrypoints
-    if android_entrypoints:
-        if stem in android_entrypoints or filename in android_entrypoints:
-            return FileClassification.ENTRYPOINT
-
-    if framework_signals:
-        if any(s in framework_signals for s in ("Activity", "Service", "BroadcastReceiver", "ViewModel", "Jetpack Compose")):
-            return FileClassification.ENTRYPOINT
-
-    if any(stem.endswith(s.lower()) for s in ("Activity", "Service", "Receiver", "Provider", "Application", "App", "Screen")):
-        return FileClassification.ENTRYPOINT
-
-    if filename in (
-        "main.py", "app.py", "server.py", "index.py", "cli.py", "worker.py",
-        "main.ts", "main.tsx", "server.ts", "server.tsx", "index.ts", "index.tsx",
-        "app.tsx", "app.ts", "page.tsx", "page.jsx", "layout.tsx", "layout.jsx",
-        "route.ts", "route.js", "main.js", "server.js", "index.js",
-        "MainActivity.kt", "MainApplication.kt", "App.kt"
-    ):
-        if filename.startswith("page.") or filename.startswith("route.") or filename.startswith("layout."):
-            return FileClassification.ROUTE
-        return FileClassification.ENTRYPOINT
-
-    if any(norm.startswith(p) or f"/{p}" in norm for p in ("pages/", "routes/", "controllers/", "api/")):
-        return FileClassification.ROUTE
-
-    return FileClassification.SOURCE_MODULE
+    manifest_entrypoints: set[str] | None = None,
+    package_json_entrypoints: set[str] | None = None,
+) -> FileClassification:
+    return primary_classify_file(
+        file_path=file_path,
+        manifest_entrypoints=manifest_entrypoints,
+        package_json_entrypoints=package_json_entrypoints,
+        framework_signals=framework_signals,
+        android_entrypoints=android_entrypoints,
+    )
 
 
 class KnowledgeGraphBuilder:
@@ -465,6 +443,7 @@ class KnowledgeGraphBuilder:
             unresolved_imports=unresolved_imports_count,
             circular_dependency_count=len(health_metrics.circular_dependencies),
             orphan_candidates=len(health_metrics.potential_orphan_candidates),
+            total_source_modules=health_metrics.total_source_modules,
             invalid_paths=0,
             warnings=[
                 f"Detected {self_edge_count} self-import statement(s).",
@@ -531,16 +510,27 @@ class KnowledgeGraphBuilder:
         health.circular_dependencies = cycles[:15]
 
         # 2. Potential Orphan Candidates (only SOURCE_MODULE with 0 incoming source imports)
+        source_modules_count = 0
         for pf in parsed_files:
             node_id = f"file:{pf.file_path}"
             curr_node = nodes.get(node_id)
             classification = curr_node.file_classification if curr_node else classify_file(pf.file_path)
 
-            if classification == FileClassification.SOURCE_MODULE:
+            if classification in (FileClassification.SOURCE_MODULE, FileClassification.ORPHAN_CANDIDATE):
+                source_modules_count += 1
                 if incoming_degree[pf.file_path] == 0:
                     health.potential_orphan_candidates.append(pf.file_path)
                     if curr_node:
                         curr_node.file_classification = FileClassification.ORPHAN_CANDIDATE
+                    health.orphan_candidate_details.append({
+                        "path": pf.file_path,
+                        "classification": FileClassification.SOURCE_MODULE.value,
+                        "incoming_imports": 0,
+                        "outgoing_imports": outgoing_degree[pf.file_path],
+                        "reason": "SOURCE_MODULE with 0 incoming source imports from internal workspace graph",
+                    })
+
+        health.total_source_modules = source_modules_count
 
         # 3. High Fan-Out & High Fan-In Files
         sorted_fan_out = sorted(parsed_files, key=lambda f: outgoing_degree[f.file_path], reverse=True)
