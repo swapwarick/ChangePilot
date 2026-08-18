@@ -1,3 +1,5 @@
+import uuid
+
 from pydantic import BaseModel, Field
 
 from app.models.enums import AnalysisTrigger
@@ -14,7 +16,7 @@ class ChangeAnalysisRequest(BaseModel):
 
 
 class ChangeAnalysisResult(BaseModel):
-    id: str
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     repository_id: str
     trigger: AnalysisTrigger
     changed_files: list[str]

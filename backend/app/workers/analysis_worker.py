@@ -13,6 +13,7 @@ Executes analysis tasks out of the HTTP request loop:
 from __future__ import annotations
 
 import logging
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -356,6 +357,7 @@ class AnalysisWorkerPipeline:
 
             # Create Analysis Record
             analysis_result_obj = ChangeAnalysisResult(
+                id=str(uuid.uuid4()),
                 repository_id=repository_id,
                 trigger=AnalysisTrigger.COMMIT_COMPARISON,
                 risk=risk_result,
