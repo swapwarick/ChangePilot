@@ -1100,9 +1100,9 @@ class ExportService:
                 u_data = [["Source File", "Unresolved Target", "Diagnostic Reason"]]
                 for u in gh.unresolved_import_details[:15]:
                     u_data.append([
-                        Paragraph(u.get("source", "—"), style_mono),
-                        Paragraph(u.get("target", "—"), style_mono),
-                        Paragraph(u.get("reason", "Module not found in AST"), style_body),
+                        Paragraph(str(u.get("source") or "—"), style_mono),
+                        Paragraph(str(u.get("target") or "—"), style_mono),
+                        Paragraph(str(u.get("reason") or "Module not found in AST"), style_body),
                     ])
                 u_table = Table(u_data, colWidths=["35%", "35%", "30%"])
                 u_table.setStyle(standard_table_style("#78350f"))
@@ -1244,9 +1244,9 @@ class ExportService:
             rv_data = [["Review Area", "Suggested Reviewer", "Ownership Evidence"]]
             for r in model.reviewer_evidence:
                 rv_data.append([
-                    Paragraph(r.get("review_area", "—"), style_body_bold),
-                    Paragraph(r.get("suggested_reviewer", "—"), style_mono),
-                    Paragraph(r.get("evidence", "—"), style_body),
+                    Paragraph(str(r.get("review_area") or "—"), style_body_bold),
+                    Paragraph(str(r.get("suggested_reviewer") or "—"), style_mono),
+                    Paragraph(str(r.get("evidence") or "—"), style_body),
                 ])
             rv_table = Table(rv_data, colWidths=["30%", "30%", "40%"])
             rv_table.setStyle(standard_table_style())
