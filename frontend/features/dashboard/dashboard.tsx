@@ -1982,7 +1982,9 @@ export function Dashboard() {
                       <CardTitle className="flex items-center gap-2">
                         <Sparkles className="size-4 text-primary" /> Active AI Analysis Report
                       </CardTitle>
-                      <Badge variant="outline">Ollama qwen3:4b</Badge>
+                      <Badge variant="outline">
+                        {providers.find((p) => p.is_default)?.model || (latestAnalysis?.ai_report ? "Synthesized Report" : "Deterministic Engine")}
+                      </Badge>
                     </div>
                   </CardHeader>
                   <CardContent>
@@ -1991,8 +1993,11 @@ export function Dashboard() {
                         {latestAnalysis.ai_report}
                       </div>
                     ) : (
-                      <div className="py-12 text-center text-xs text-muted-foreground">
-                        No AI report generated yet. Run an analysis job to view executive AI insights.
+                      <div className="py-12 text-center text-xs text-muted-foreground space-y-2">
+                        <div>No AI report generated yet. Run an analysis job to view executive AI insights.</div>
+                        <Button variant="outline" size="sm" onClick={() => setActiveTab("Settings")}>
+                          Configure AI Provider in Settings
+                        </Button>
                       </div>
                     )}
                   </CardContent>
@@ -2001,29 +2006,38 @@ export function Dashboard() {
                 <Card>
                   <CardHeader>
                     <CardTitle>Architectural Recommendations</CardTitle>
-                    <CardDescription>AI-suggested code improvements</CardDescription>
+                    <CardDescription>Evidence-backed remediation guidance</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-3 text-xs">
-                    <div className="p-3 rounded border border-border bg-background space-y-1">
-                      <div className="font-semibold text-primary flex items-center gap-1.5">
-                        <CheckCircle2 className="size-3.5" /> Decouple Monolithic API Routes
-                      </div>
-                      <div className="text-muted-foreground">Extract heavy tender enrichment utilities from <code className="text-primary">src/lib</code>.</div>
-                    </div>
-
-                    <div className="p-3 rounded border border-border bg-background space-y-1">
-                      <div className="font-semibold text-warning flex items-center gap-1.5">
-                        <AlertTriangle className="size-3.5" /> Add Integration Spec Tests
-                      </div>
-                      <div className="text-muted-foreground">Create unit coverage for modified keepalive cron endpoints.</div>
-                    </div>
-
-                    <div className="p-3 rounded border border-border bg-background space-y-1">
-                      <div className="font-semibold text-emerald-500 flex items-center gap-1.5">
-                        <CheckCircle2 className="size-3.5" /> Clean Up Unused Orphans
-                      </div>
-                      <div className="text-muted-foreground">Review 28 unreferenced files to optimize bundle size.</div>
-                    </div>
+                    {latestAnalysis && latestAnalysis.risk.recommendations && latestAnalysis.risk.recommendations.length > 0 ? (
+                      latestAnalysis.risk.recommendations.slice(0, 5).map((rec, idx) => (
+                        <div key={idx} className="p-3 rounded border border-border bg-background space-y-1">
+                          <div className="font-semibold text-primary flex items-center gap-1.5">
+                            <CheckCircle2 className="size-3.5 text-emerald-500 shrink-0" /> {rec.statement_type || "RECOMMENDATION"}
+                          </div>
+                          <div className="text-muted-foreground">{rec.claim}</div>
+                          {rec.source_evidence && (
+                            <div className="text-[10px] text-muted-foreground/80 font-mono mt-1">{rec.source_evidence}</div>
+                          )}
+                        </div>
+                      ))
+                    ) : (
+                      latestAnalysis?.risk.risk_breakdown && latestAnalysis.risk.risk_breakdown.length > 0 ? (
+                        latestAnalysis.risk.risk_breakdown.filter((item) => item.recommendation).slice(0, 5).map((item, idx) => (
+                          <div key={idx} className="p-3 rounded border border-border bg-background space-y-1">
+                            <div className="font-semibold text-warning flex items-center gap-1.5">
+                              <AlertTriangle className="size-3.5 text-amber-500 shrink-0" /> {item.name || item.rule}
+                            </div>
+                            <div className="text-muted-foreground">{item.recommendation}</div>
+                            <div className="text-[10px] text-muted-foreground/80 font-mono mt-1">{item.evidence}</div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="p-4 text-center text-xs text-muted-foreground">
+                          {latestAnalysis ? "No active architectural remediation items required." : "Run an analysis job to view recommendations."}
+                        </div>
+                      )
+                    )}
                   </CardContent>
                 </Card>
               </div>
