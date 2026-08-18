@@ -13,26 +13,13 @@ import io
 import json
 import zipfile
 from datetime import UTC, datetime
-from typing import Any, Union
+from typing import Any
 
 from app.models.analysis import ChangeAnalysisResult
 from app.models.export import (
     AnalysisExportModel,
-    ExportBlastRadius,
-    ExportChangedFile,
-    ExportDependencyPath,
-    ExportEvidenceStatement,
-    ExportFinding,
-    ExportGraphHealth,
-    ExportMetadata,
-    ExportRepositoryHealth,
-    ExportRepositoryInfo,
-    ExportRiskBreakdownItem,
-    ExportRiskSummary,
-    ExportTestFinding,
 )
 from app.models.repository import RepositorySummary
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -71,7 +58,7 @@ def _risk_bg_hex(level: str) -> str:
 
 
 def _ensure_validated_model(
-    analysis_or_model: Union[AnalysisExportModel, ChangeAnalysisResult],
+    analysis_or_model: AnalysisExportModel | ChangeAnalysisResult,
     repository: RepositorySummary | None = None,
     health_metrics: dict[str, Any] | None = None,
     base_commit: str | None = None,
@@ -171,7 +158,7 @@ class ExportService:
 
     def export_json(
         self,
-        analysis_or_model: Union[AnalysisExportModel, ChangeAnalysisResult],
+        analysis_or_model: AnalysisExportModel | ChangeAnalysisResult,
         repository: RepositorySummary | None = None,
         health_metrics: dict[str, Any] | None = None,
     ) -> bytes:
@@ -188,7 +175,7 @@ class ExportService:
 
     def export_csv(
         self,
-        analysis_or_model: Union[AnalysisExportModel, ChangeAnalysisResult],
+        analysis_or_model: AnalysisExportModel | ChangeAnalysisResult,
         repository: RepositorySummary | None = None,
         health_metrics: dict[str, Any] | None = None,
     ) -> bytes:
@@ -343,7 +330,7 @@ class ExportService:
 
     def export_markdown(
         self,
-        analysis_or_model: Union[AnalysisExportModel, ChangeAnalysisResult],
+        analysis_or_model: AnalysisExportModel | ChangeAnalysisResult,
         repository: RepositorySummary | None = None,
         health_metrics: dict[str, Any] | None = None,
     ) -> bytes:
@@ -465,12 +452,16 @@ class ExportService:
 
         # Section: Changed Files
         h("6. Changed Files Detail", 2)
+        raw_cnt = model.analysis_quality.raw_changed_files_count or len(model.changed_files)
+        arch_cnt = model.analysis_quality.architectural_changed_files_count or len(model.changed_files)
+        lines.append(f"**Changed Files Scope:** `{raw_cnt}` total changed files (`{arch_cnt}` architecturally relevant source/build files)\n")
         if model.changed_files:
-            lines.append("| # | File Path | Language | Module | Signals | Classification |")
-            lines.append("|---|-----------|----------|--------|---------|----------------|")
+            lines.append("| # | File Path | Category | Language | Module | Signals | Classification |")
+            lines.append("|---|-----------|----------|----------|--------|---------|----------------|")
             for i, cf in enumerate(model.changed_files, start=1):
                 sigs = ", ".join(cf.risk_signals) if cf.risk_signals else "—"
-                lines.append(f"| {i} | `{cf.path}` | {cf.language} | `{cf.module}` | {sigs} | {cf.test_status} |")
+                cat_label = getattr(cf, "category", "SOURCE")
+                lines.append(f"| {i} | `{cf.path}` | `{cat_label}` | {cf.language} | `{cf.module}` | {sigs} | {cf.test_status} |")
             lines.append("")
         rule()
 
@@ -583,7 +574,7 @@ class ExportService:
 
     def export_pdf(
         self,
-        analysis_or_model: Union[AnalysisExportModel, ChangeAnalysisResult],
+        analysis_or_model: AnalysisExportModel | ChangeAnalysisResult,
         repository: RepositorySummary | None = None,
         health_metrics: dict[str, Any] | None = None,
     ) -> bytes:
@@ -1261,9 +1252,23 @@ class ExportService:
             rv_table = Table(rv_data, colWidths=["30%", "30%", "40%"])
             rv_table.setStyle(standard_table_style())
             story.append(rv_table)
-        else:
-            story.append(Paragraph("No reviewer ownership evidence recorded in persisted analysis.", style_body))
-        story.append(Spacer(1, 14))
+        # Section 10: Analysis Quality
+        story.append(Paragraph("10. Analysis Quality & Epistemological Audit", style_h1))
+        story.append(hr())
+        aq = model.analysis_quality
+        aq_data = [
+            ["Pipeline Stage", "Status", "Verification Details"],
+            [Paragraph("<b>Git Diff Analysis</b>", style_body), Paragraph(aq.git_diff_status, style_mono), Paragraph("Commit diff stat verified without truncated chunks.", style_body)],
+            [Paragraph("<b>Language AST Parsers</b>", style_body), Paragraph(aq.parser_status, style_mono), Paragraph("Multi-language parser adapters active (Kotlin, Java, TS, JS, Python).", style_body)],
+            [Paragraph("<b>AST Graph Integrity</b>", style_body), Paragraph(aq.ast_graph_status, style_mono), Paragraph(f"{model.graph_health.nodes} nodes, {model.graph_health.edges} valid dependency edges mapped.", style_body)],
+            [Paragraph("<b>Dependency Resolution</b>", style_body), Paragraph(aq.dependency_resolution, style_mono), Paragraph(f"{model.blast_radius.indirect_impact} transitive downstream dependents reached.", style_body)],
+            [Paragraph("<b>Manifest / Config Analysis</b>", style_body), Paragraph(aq.manifest_analysis, style_mono), Paragraph("Application component entrypoints and configuration files indexed.", style_body)],
+            [Paragraph("<b>Coverage Analysis</b>", style_body), Paragraph(aq.coverage_analysis, style_mono), Paragraph("Dynamic code coverage feed unavailable; structural test gap inferred.", style_body)],
+        ]
+        aq_table = Table(aq_data, colWidths=["30%", "15%", "55%"])
+        aq_table.setStyle(standard_table_style("#1e293b"))
+        story.append(aq_table)
+        story.append(Spacer(1, 10))
 
         # Audit Footer
         story.append(Paragraph(

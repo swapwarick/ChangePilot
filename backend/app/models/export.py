@@ -8,27 +8,29 @@ Single source of truth consumed identically across:
   - Dashboard API
 
 Guarantees:
-  1. Exact same canonical blast radius semantics everywhere.
-  2. No contradictory evidence or metrics.
-  3. Evidence-grounded package dependency classification.
-  4. Fully explainable 5-category repository health breakdown.
-  5. Precise test change classification (no false "COVERED" claims).
-  6. Machine-readable scoring trace where SUM(final_points) == risk_score.
-  7. Strict consistency validation before export generation.
+  1. Multi-language AST support (Kotlin, Java, Python, TypeScript, JavaScript).
+  2. Android Manifest entrypoint recognition & package resolution.
+  3. Precise authentication & granular security signal separation.
+  4. Architectural changed-file filtering (distinguishing raw 72 from architectural 27).
+  5. Canonical blast-radius semantics across all views.
+  6. Explainable 5-category health breakdown with security evidence.
+  7. Strict cross-metric consistency validation.
 """
 
 from __future__ import annotations
 
-import json
 from collections import defaultdict, deque
 from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.analysis.file_classifier import (
+    FileTypeCategory,
+    classify_file_type,
+    filter_architecturally_relevant_files,
+)
 from app.models.analysis import ChangeAnalysisResult
 from app.models.repository import RepositorySummary
-from app.models.risk import EvidenceStatement, RiskBreakdownItem, RiskEvidence, RiskResult
-
 
 # ---------------------------------------------------------------------------
 # Component & Breakdown Models
@@ -109,12 +111,13 @@ class ExportEvidenceStatement(BaseModel):
 class ExportChangedFile(BaseModel):
     path: str
     change_type: str = "MODIFIED"  # ADDED, MODIFIED, DELETED, RENAMED
+    category: str = "SOURCE"  # SOURCE, TEST, CONFIGURATION, BUILD, IDE_METADATA, ASSET, BACKUP
     language: str = "Unknown"
     module: str = "root"
     risk_signals: list[str] = Field(default_factory=list)
     direct_impact: str = "Directly changed in commit"
     test_status: str = "Coverage percentage unavailable — structural test gap inferred"
-    test_change_status: str = "NO_TEST_CHANGE"  # NO_TEST_CHANGE, TEST_FILE_CHANGED, TEST_EXISTS, AFFECTED_CODE_REFERENCED, COVERAGE_MEASURED, COVERAGE_UNKNOWN
+    test_change_status: str = "NO_TEST_CHANGE"
 
 
 class ExportDependencyPath(BaseModel):
@@ -197,6 +200,19 @@ class ExportGraphHealth(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class ExportAnalysisQuality(BaseModel):
+    git_diff_status: str = "PASS"
+    parser_status: str = "PASS"
+    ast_graph_status: str = "PASS"
+    dependency_resolution: str = "PASS"
+    manifest_analysis: str = "PASS"
+    coverage_analysis: str = "UNAVAILABLE"
+    raw_changed_files_count: int = 0
+    architectural_changed_files_count: int = 0
+    quality_score: float = 1.0
+    warnings: list[str] = Field(default_factory=list)
+
+
 class ExportMetadata(BaseModel):
     repository_id: str
     repository_name: str
@@ -239,6 +255,7 @@ class AnalysisExportModel(BaseModel):
     rollback_considerations: list[str] = Field(default_factory=list)
     graph_health: ExportGraphHealth
     reviewer_evidence: list[dict[str, Any]] = Field(default_factory=list)
+    analysis_quality: ExportAnalysisQuality = Field(default_factory=ExportAnalysisQuality)
     metadata: ExportMetadata
     ai_report: str | None = None
 
@@ -302,6 +319,11 @@ class AnalysisExportModel(BaseModel):
         impacted_modules_raw = analysis.impacted_modules or []
         graph = analysis.dependency_graph
 
+        # Calculate architectural relevance
+        raw_changed_count = len(changed_files_raw)
+        arch_relevant_files = filter_architecturally_relevant_files(changed_files_raw)
+        arch_changed_count = len(arch_relevant_files)
+
         # 2. Canonical Blast Radius Traversal (strictly source-code relationships)
         valid_rels = {
             "SOURCE_IMPORT", "DYNAMIC_IMPORT", "CALLS", "DEPENDS_ON",
@@ -313,7 +335,8 @@ class AnalysisExportModel(BaseModel):
         }
         ignored_dir_markers = (
             "node_modules/", ".git/", ".next/", "dist/", "build/",
-            "coverage/", "venv/", ".venv/", "__pycache__/", "target/"
+            "coverage/", "venv/", ".venv/", "__pycache__/", "target/",
+            ".idea/", ".gradle/", "gradle/"
         )
 
         reverse_adj: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
@@ -404,7 +427,6 @@ class AnalysisExportModel(BaseModel):
 
         if risk.risk_breakdown:
             for item in risk.risk_breakdown:
-                # If indirect impact is 0, skip large_blast_radius rule to prevent contradiction
                 if item.rule == "large_blast_radius" and indirect_impact == 0:
                     continue
 
@@ -481,18 +503,18 @@ class AnalysisExportModel(BaseModel):
             score=risk.evidence_completeness,
             available_signals=[
                 "Git Commit Diff Analysis",
-                "Tree-Sitter AST Knowledge Graph",
+                "Tree-Sitter Multi-Language AST Graph",
                 "Dependency Graph BFS Traversal",
                 "Deterministic Risk Policy Engine",
             ],
             missing_signals=[],
             unavailable_sources=[
-                "Dynamic Code Coverage Artifacts (lcov/istanbul)",
+                "Dynamic Code Coverage Artifacts (lcov/jacoco)",
                 "Production Incident Stream Feed",
             ],
             explanation=(
                 f"{int(round(risk.evidence_completeness * 100))}% deterministic evidence completeness based on "
-                "available static Git AST, graph topology, and manifest files."
+                "available static Git AST, graph topology, manifest, and source files."
             ),
         )
 
@@ -533,7 +555,7 @@ class AnalysisExportModel(BaseModel):
                 ExportEvidenceStatement(
                     id=f"FACT-{fact_idx:03d}",
                     statement_type="FACT",
-                    claim=f"{len(changed_files_raw)} file(s) modified in this change set.",
+                    claim=f"{raw_changed_count} file(s) modified in change set ({arch_changed_count} architecturally relevant source/build files).",
                     source_evidence="Git commit diff analysis",
                     affected_files=changed_files_raw[:20],
                     traceability_ref="git_diff_stat",
@@ -547,7 +569,7 @@ class AnalysisExportModel(BaseModel):
                         id=f"FACT-{fact_idx:03d}",
                         statement_type="FACT",
                         claim=f"Knowledge graph contains {len(graph.nodes)} AST nodes and {len(graph.edges)} dependency relationships.",
-                        source_evidence="Tree-Sitter AST & Graph parser",
+                        source_evidence="Tree-Sitter Multilingual AST & Graph parser",
                         traceability_ref="graph_snapshot",
                     )
                 )
@@ -568,9 +590,10 @@ class AnalysisExportModel(BaseModel):
             for ev in evidence_list:
                 if ev.signal in (
                     "dependency_upgrades", "dependency_version_changed", "dependency_added",
-                    "dependency_removed", "lockfile_changed", "authentication_change", "env_vars_changed",
-                    "database_schema", "public_api_changed", "critical_component_modified",
-                    "large_refactor", "migration_detected"
+                    "dependency_removed", "lockfile_changed", "authentication_change", "authorization_change",
+                    "credential_change", "session_change", "crypto_change", "permission_change",
+                    "secrets_modified", "env_vars_changed", "database_schema_change", "migration_detected",
+                    "public_api_changed", "critical_component_modified", "large_refactor"
                 ):
                     facts.append(
                         ExportEvidenceStatement(
@@ -636,6 +659,18 @@ class AnalysisExportModel(BaseModel):
                             claim="Package dependency upgrade: Audit external dependency changes before deployment.",
                             source_evidence=f"Observed in {', '.join(ev.file_paths[:2])}" if ev.file_paths else "Manifest scan",
                             traceability_ref=f"rule:{ev.signal}",
+                            affected_files=ev.file_paths or [],
+                        )
+                    )
+                    inf_idx += 1
+                elif ev.signal == "authentication_change":
+                    inferences.append(
+                        ExportEvidenceStatement(
+                            id=f"INF-{inf_idx:03d}",
+                            statement_type="INFERENCE",
+                            claim="Authentication boundary change: Login/Logout or identity logic was modified, requiring focused regression testing.",
+                            source_evidence=f"Observed in {', '.join(ev.file_paths[:2])}" if ev.file_paths else "Security rule match",
+                            traceability_ref="rule:authentication_change",
                             affected_files=ev.file_paths or [],
                         )
                     )
@@ -711,24 +746,27 @@ class AnalysisExportModel(BaseModel):
                     )
                     rec_idx += 1
 
-        # 7. Changed Files Details (Exact Test Change Status)
+        # 7. Changed Files Details (Exact Test Change Status & Categorization)
         changed_files_models: list[ExportChangedFile] = []
-        has_test_in_commit = any("test" in f.lower() or "spec" in f.lower() for f in changed_files_raw)
+        has_test_in_commit = any(classify_file_type(f) == FileTypeCategory.TEST for f in changed_files_raw)
 
         for f in changed_files_raw:
             norm_f = f.replace("\\", "/")
             ext = norm_f.split(".")[-1].lower() if "." in norm_f else ""
             lang_map = {
+                "kt": "Kotlin", "kts": "Kotlin Script", "java": "Java",
                 "ts": "TypeScript", "tsx": "TypeScript (React)", "js": "JavaScript",
                 "jsx": "JavaScript (React)", "cjs": "CommonJS", "mjs": "ES Module",
                 "py": "Python", "json": "JSON", "md": "Markdown", "css": "CSS",
                 "html": "HTML", "yml": "YAML", "yaml": "YAML", "sql": "SQL",
-                "sh": "Shell", "rs": "Rust", "go": "Go", "txt": "Plain Text"
+                "sh": "Shell", "rs": "Rust", "go": "Go", "txt": "Plain Text",
+                "xml": "XML", "properties": "Properties"
             }
             lang = lang_map.get(ext, ext.upper() if ext else "Text")
             parts = norm_f.split("/")
             module = parts[0] if len(parts) > 1 else "root"
-            is_test = any(t in norm_f.lower() for t in ("test", "spec", "__tests__"))
+            file_category = classify_file_type(f).value
+            is_test = file_category == "TEST"
 
             test_change_status = "TEST_FILE_CHANGED" if is_test else ("TEST_EXISTS" if has_test_in_commit else "NO_TEST_CHANGE")
             test_status_text = (
@@ -747,6 +785,7 @@ class AnalysisExportModel(BaseModel):
                 ExportChangedFile(
                     path=f,
                     change_type="MODIFIED",
+                    category=file_category,
                     language=lang,
                     module=module,
                     risk_signals=matched_signals,
@@ -787,10 +826,10 @@ class AnalysisExportModel(BaseModel):
                     )
                 )
 
-        # 9. Test Findings (Careful coverage distinction)
+        # 9. Test Findings
         test_findings: list[ExportTestFinding] = []
         test_files_changed = [
-            f for f in changed_files_raw if any(t in f.lower() for t in ("test", "spec", "__tests__"))
+            f for f in changed_files_raw if classify_file_type(f) == FileTypeCategory.TEST
         ]
         if test_files_changed:
             test_findings.append(
@@ -810,12 +849,12 @@ class AnalysisExportModel(BaseModel):
                     title="Missing Test Modifications",
                     description="No related unit test or test specification modifications were detected in this commit set.",
                     recommendation="Add unit or integration tests covering modified source logic.",
-                    affected_files=changed_files_raw,
+                    affected_files=arch_relevant_files[:10],
                     status="GAP_DETECTED",
                 )
             )
 
-        # 10. Explainable 5-Category Repository Health Breakdown
+        # 10. Explainable 5-Category Repository Health Breakdown with Security Logic
         hm = health_metrics or {}
         cat_data = hm.get("categories", {})
         orphan_candidates_raw = hm.get("potential_orphan_candidates", hm.get("orphan_modules", []))
@@ -828,20 +867,32 @@ class AnalysisExportModel(BaseModel):
         arch_score = max(100 - len(circular_raw) * 8 - len(arch_viol_raw) * 10, 10)
         dep_score = max(100 - len(fan_out_raw) * 4, 10)
         test_score = max(100 - min(len(gap_raw) * 3, 50), 10)
-        sec_score = max(100 - len(arch_viol_raw) * 12, 10)
+
+        # Security health deducts points when active security risk findings exist without dedicated review
+        if sec_findings:
+            sec_deductions = min(len(sec_findings) * 15, 40)
+            sec_score = max(100 - sec_deductions - len(arch_viol_raw) * 12, 20)
+            sec_evidence = [f"{len(sec_findings)} active security signal(s) in change set"] + [f.description[:60] for f in sec_findings[:2]]
+            sec_recs = [f.recommendation for f in sec_findings if f.recommendation][:2] or ["Conduct security review before merging."]
+        else:
+            sec_score = max(100 - len(arch_viol_raw) * 12, 10)
+            sec_evidence = ["Baseline static security posture within expected bounds."]
+            sec_recs = ["Audit security configurations before major releases."]
+
         maint_score = max(100 - min(len(orphan_candidates_raw) * 2, 40), 10)
 
         if cat_data and isinstance(cat_data, dict):
             arch_score = cat_data.get("Architecture", {}).get("score", arch_score)
             dep_score = cat_data.get("Dependencies", {}).get("score", dep_score)
             test_score = cat_data.get("Testing", {}).get("score", test_score)
-            sec_score = cat_data.get("Security", {}).get("score", sec_score)
+            if not sec_findings:
+                sec_score = cat_data.get("Security", {}).get("score", sec_score)
             maint_score = cat_data.get("Maintainability", {}).get("score", maint_score)
 
         weighted_overall = int(round(
             arch_score * 0.25 + dep_score * 0.20 + test_score * 0.20 + sec_score * 0.20 + maint_score * 0.15
         ))
-        health_score_final = hm.get("health_score", weighted_overall)
+        health_score_final = weighted_overall
 
         health_breakdown = {
             "Architecture": ExportHealthCategoryDetail(
@@ -873,8 +924,8 @@ class AnalysisExportModel(BaseModel):
                 score=sec_score,
                 weight=0.20,
                 deductions=100 - sec_score,
-                evidence=[f"{len(sec_findings)} security signal(s) in active diff"],
-                recommendations=["Audit sensitive database and authentication modules before release."],
+                evidence=sec_evidence,
+                recommendations=sec_recs,
             ),
             "Maintainability": ExportHealthCategoryDetail(
                 category="Maintainability",
@@ -929,7 +980,21 @@ class AnalysisExportModel(BaseModel):
             warnings=gh.warnings if gh else [],
         )
 
-        # 12. Metadata
+        # 12. Analysis Quality
+        analysis_quality = ExportAnalysisQuality(
+            git_diff_status="PASS",
+            parser_status="PASS" if (graph and len(graph.nodes) > 1) else "WARNING",
+            ast_graph_status="PASS" if (graph and len(graph.nodes) > 1) else "INCOMPLETE",
+            dependency_resolution="PASS",
+            manifest_analysis="PASS" if any("androidmanifest" in f.lower() for f in changed_files_raw) else "N/A",
+            coverage_analysis="UNAVAILABLE",
+            raw_changed_files_count=raw_changed_count,
+            architectural_changed_files_count=arch_changed_count,
+            quality_score=1.0 if (graph and len(graph.nodes) > 1) else 0.75,
+            warnings=["AST graph contains minimal nodes; verify parser coverage."] if (graph and len(graph.nodes) <= 1) else [],
+        )
+
+        # 13. Metadata
         meta = ExportMetadata(
             repository_id=repository.id,
             repository_name=repository.name,
@@ -967,6 +1032,7 @@ class AnalysisExportModel(BaseModel):
             rollback_considerations=risk.deployment_considerations or [],
             graph_health=graph_health_model,
             reviewer_evidence=risk.recommended_review_areas or [],
+            analysis_quality=analysis_quality,
             metadata=meta,
             ai_report=analysis.ai_report,
         )

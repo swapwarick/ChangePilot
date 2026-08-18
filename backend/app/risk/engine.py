@@ -2,8 +2,14 @@ from collections import defaultdict
 from typing import Any
 
 from app.models.enums import RecommendationType, RiskLevel, StatementType
-from app.models.risk import EvidenceStatement, RiskBreakdownItem, RiskEvidence, RiskInput, RiskResult
-from app.risk.rules import RULES, RiskRule
+from app.models.risk import (
+    EvidenceStatement,
+    RiskBreakdownItem,
+    RiskEvidence,
+    RiskInput,
+    RiskResult,
+)
+from app.risk.rules import RULES
 
 
 class DeterministicRiskEngine:
@@ -66,22 +72,27 @@ class DeterministicRiskEngine:
                 )
             )
 
-        if risk_input.large_refactor:
+        arch_relevant = [
+            f for f in risk_input.changed_files
+            if not any(f.lower().startswith(p) or f"/{p}" in f.lower() for p in (".idea/", ".gradle/", "build/", ".vscode/", "gradle/"))
+            and not any(f.lower().endswith(ext) for ext in (".png", ".webp", ".jpg", ".jpeg", ".ico", ".svg", ".jar", ".aar", ".bak", ".iml", "~"))
+        ]
+        if len(arch_relevant) >= 15 or risk_input.large_refactor and len(arch_relevant) >= 15:
             evidence.append(
                 RiskEvidence(
                     signal="large_refactor",
-                    name="Large Refactor Change",
+                    name="Large Architectural Refactor",
                     category="architecture",
-                    description=f"The change set touches {len(risk_input.changed_files)} files, qualifying as a large refactor.",
+                    description=f"{len(arch_relevant)} architecturally relevant source/build files modified (out of {len(risk_input.changed_files)} total changed files).",
                     weight=0.16,
-                    score=1.0,
-                    file_paths=risk_input.changed_files[:15],
+                    score=min(len(arch_relevant) / 30.0, 1.0),
+                    file_paths=arch_relevant[:15],
                     recommendation="Consider breaking change set into smaller, isolated pull requests for safer review.",
                     recommendation_type=RecommendationType.GENERIC_BEST_PRACTICE,
-                    threshold=">= 15 files",
+                    threshold=">= 15 architectural files",
                     rule="large_refactor",
                     evidence_type="diff_metric",
-                    evidence_value=str(len(risk_input.changed_files)),
+                    evidence_value=f"{len(arch_relevant)}/{len(risk_input.changed_files)}",
                 )
             )
 

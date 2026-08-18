@@ -10,10 +10,16 @@ from __future__ import annotations
 import logging
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.tables import AnalysisJobRow, AnalysisRow, RepoKnowledgeGraphRow, RepositoryRow, UserRow
+from app.database.tables import (
+    AnalysisJobRow,
+    AnalysisRow,
+    RepoKnowledgeGraphRow,
+    RepositoryRow,
+    UserRow,
+)
 
 logger = logging.getLogger(__name__)
 

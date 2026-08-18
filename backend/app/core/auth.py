@@ -11,11 +11,10 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.database.session import DbSession
-from app.database.tables import SessionRow, UserRow
+from app.database.tables import UserRow
 
 logger = logging.getLogger(__name__)
 

@@ -38,7 +38,7 @@ class AIProviderRegistry:
                 try:
                     return await provider.generate(request)
                 except Exception as exc:  # noqa: BLE001 - records adapter failure before fallback.
-                    errors.append(f"{config.id} attempt {attempt + 1}: {repr(exc)}")
+                    errors.append(f"{config.id} attempt {attempt + 1}: {exc!r}")
                     logger.warning("AI provider failed: %r", exc, extra={"provider_id": config.id, "error": str(exc)})
                     if attempt + 1 < config.retry_policy.max_attempts:
                         await asyncio.sleep(config.retry_policy.backoff_seconds)

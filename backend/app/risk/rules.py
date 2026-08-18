@@ -1,3 +1,14 @@
+"""Deterministic Risk Engine Rules & Signal Registry.
+
+Includes:
+  - Granular security rules (authentication_change, authorization_change, credential_change, session_change, crypto_change, permission_change, secrets_modified)
+  - Database schema & migration detection
+  - Architectural blast radius & coupling rules
+  - Boundary-aware path & symbol matching
+"""
+
+from __future__ import annotations
+
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
@@ -20,36 +31,99 @@ class RiskRule:
 
     def matches(self, file_path: str) -> bool:
         normalized = file_path.replace("\\", "/").lower()
-        basename = PurePosixPath(normalized).name
-        suffix = PurePosixPath(normalized).suffix
-        if self.file_names and basename in self.file_names:
+        basename = PurePosixPath(normalized).name.lower()
+        stem = PurePosixPath(normalized).stem.lower()
+        suffix = PurePosixPath(normalized).suffix.lower()
+
+        if self.file_names and basename in [f.lower() for f in self.file_names]:
             return True
-        return any(marker in normalized for marker in self.path_markers) or (bool(self.extensions) and suffix in self.extensions)
+
+        if self.extensions and suffix in [e.lower() for e in self.extensions]:
+            return True
+
+        for marker in self.path_markers:
+            m = marker.lower()
+            if m.endswith("/"):
+                if f"/{m}" in f"/{normalized}":
+                    return True
+            else:
+                # Word or boundary matching
+                stem_words = stem.replace("_", "-").split("-")
+                if m in stem_words or stem.startswith(m) or stem.endswith(m):
+                    return True
+                if f"/{m}/" in f"/{normalized}":
+                    return True
+
+        return False
 
 
 RULES: tuple[RiskRule, ...] = (
-    # Security
+    # Security: Granular Signals
     RiskRule(
         signal="authentication_change",
         name="Authentication Modified",
         category="security",
-        description="Authentication and session management logic was modified.",
+        description="Authentication, login, logout, or user identity verification logic was modified.",
         weight=0.22,
-        recommendation="Run authentication regression tests and request security review.",
+        recommendation="Run authentication regression tests and request security review before merging.",
         recommendation_type=RecommendationType.POLICY_BASED,
         threshold="1 file",
-        path_markers=("auth", "session", "login", "oauth", "jwt", "better-auth"),
+        path_markers=("auth/", "authentication/", "login/", "logout/", "login", "logout", "authmanager", "authenticator", "biometric", "mfa", "2fa"),
     ),
     RiskRule(
         signal="authorization_change",
         name="Authorization Modified",
         category="security",
-        description="Role-based access control or permission enforcement changed.",
+        description="Role-based access control, user roles, or permission enforcement policies changed.",
         weight=0.20,
-        recommendation="Verify permission checks across affected API endpoints.",
+        recommendation="Verify access control checks across all protected endpoints and user actions.",
         recommendation_type=RecommendationType.POLICY_BASED,
         threshold="1 file",
-        path_markers=("permission", "rbac", "acl", "policy", "authorize"),
+        path_markers=("permission/", "rbac/", "acl/", "policy/", "permissionmanager", "authorizer"),
+    ),
+    RiskRule(
+        signal="credential_change",
+        name="Credentials & Password Handling Modified",
+        category="security",
+        description="Password hashing, keystore, keychain, or credential storage modified.",
+        weight=0.24,
+        recommendation="Verify credentials are encrypted at rest and never logged in cleartext.",
+        recommendation_type=RecommendationType.POLICY_BASED,
+        threshold="1 file",
+        path_markers=("password", "keystore", "keychain", "credential", "credentialmanager"),
+    ),
+    RiskRule(
+        signal="session_change",
+        name="Session Management Modified",
+        category="security",
+        description="User session lifecycle, session tokens, or session timeout handling modified.",
+        weight=0.20,
+        recommendation="Verify session invalidation on logout and ensure token expiration is enforced.",
+        recommendation_type=RecommendationType.POLICY_BASED,
+        threshold="1 file",
+        path_markers=("session/", "sessionmanager", "session_manager", "usersession", "tokenmanager", "jwt"),
+    ),
+    RiskRule(
+        signal="crypto_change",
+        name="Cryptography / Encryption Modified",
+        category="security",
+        description="Cryptographic cipher, key generation, or hashing algorithms altered.",
+        weight=0.24,
+        recommendation="Ensure industry-standard algorithms (AES-256, RSA-4096, SHA-256) are utilized.",
+        recommendation_type=RecommendationType.POLICY_BASED,
+        threshold="1 file",
+        path_markers=("crypto/", "cipher", "encryption", "aes", "rsa", "hash"),
+    ),
+    RiskRule(
+        signal="permission_change",
+        name="System Permissions Modified",
+        category="security",
+        description="Application system permissions or runtime permission requests modified.",
+        weight=0.18,
+        recommendation="Review requested permissions for principle of least privilege.",
+        recommendation_type=RecommendationType.POLICY_BASED,
+        threshold="1 file",
+        file_names=("androidmanifest.xml",),
     ),
     RiskRule(
         signal="secrets_modified",
@@ -60,8 +134,8 @@ RULES: tuple[RiskRule, ...] = (
         recommendation="Audit secret storage for cleartext leaks and rotate compromised tokens.",
         recommendation_type=RecommendationType.POLICY_BASED,
         threshold="1 file",
-        path_markers=("secret", "credential", "private_key", "pem", "keystore"),
-        file_names=(".env", ".env.local", "secrets.yaml"),
+        path_markers=("secret", "private_key", "pem"),
+        file_names=(".env", ".env.local", ".env.production", "secrets.yaml", "secrets.json", "secrets.xml"),
     ),
 
     # Database
@@ -74,7 +148,7 @@ RULES: tuple[RiskRule, ...] = (
         recommendation="Verify backward compatibility and check for destructive column drops.",
         recommendation_type=RecommendationType.EVIDENCE_BACKED,
         threshold="1 file",
-        path_markers=("schema", "database", "prisma", "models/"),
+        path_markers=("schema/", "models/", "entities/", "prisma/"),
         extensions=(".sql",),
     ),
     RiskRule(
@@ -86,8 +160,8 @@ RULES: tuple[RiskRule, ...] = (
         recommendation="Test forward and backward migration scripts on staging before deployment.",
         recommendation_type=RecommendationType.EVIDENCE_BACKED,
         threshold="1 file",
-        path_markers=("alembic", "migration", "migrations/"),
-        extensions=(".py", ".sql"),
+        path_markers=("alembic/", "migration/", "migrations/"),
+        extensions=(".sql",),
     ),
     RiskRule(
         signal="no_rollback_plan",
@@ -122,7 +196,7 @@ RULES: tuple[RiskRule, ...] = (
         recommendation="Check API gateway routes and notify external API consumers.",
         recommendation_type=RecommendationType.EVIDENCE_BACKED,
         threshold="1 file",
-        path_markers=("router.delete", "delete_endpoint", "api/"),
+        path_markers=("router.delete", "delete_endpoint"),
     ),
 
     # Infrastructure
@@ -135,7 +209,6 @@ RULES: tuple[RiskRule, ...] = (
         recommendation="Rebuild container image locally and verify container startup health.",
         recommendation_type=RecommendationType.EVIDENCE_BACKED,
         threshold="1 file",
-        path_markers=("dockerfile", "docker-compose"),
         file_names=("dockerfile", "docker-compose.yml", "docker-compose.yaml"),
     ),
     RiskRule(
@@ -147,7 +220,7 @@ RULES: tuple[RiskRule, ...] = (
         recommendation="Test pipeline execution on a pull request branch before merging.",
         recommendation_type=RecommendationType.EVIDENCE_BACKED,
         threshold="1 file",
-        path_markers=(".github/workflows", "ci.yml", "pipeline"),
+        path_markers=(".github/workflows/", "ci.yml", "pipeline.yml"),
     ),
     RiskRule(
         signal="terraform_changed",
@@ -158,7 +231,6 @@ RULES: tuple[RiskRule, ...] = (
         recommendation="Execute `terraform plan` to verify cloud resource modifications.",
         recommendation_type=RecommendationType.EVIDENCE_BACKED,
         threshold="1 file",
-        path_markers=("terraform", "main.tf", "variables.tf"),
         extensions=(".tf",),
     ),
     RiskRule(
@@ -170,7 +242,7 @@ RULES: tuple[RiskRule, ...] = (
         recommendation="Run `kubectl diff` against staging cluster before applying.",
         recommendation_type=RecommendationType.EVIDENCE_BACKED,
         threshold="1 file",
-        path_markers=("k8s/", "kubernetes", "helm", "deployment.yaml"),
+        path_markers=("k8s/", "kubernetes/", "helm/", "deployment.yaml"),
     ),
     RiskRule(
         signal="env_vars_changed",
@@ -205,7 +277,7 @@ RULES: tuple[RiskRule, ...] = (
         recommendation="Audit updated dependencies for breaking changes and vulnerability advisories.",
         recommendation_type=RecommendationType.POLICY_BASED,
         threshold="1 file",
-        file_names=("package.json", "package-lock.json", "pyproject.toml", "requirements.txt"),
+        file_names=("package.json", "package-lock.json", "pyproject.toml", "requirements.txt", "build.gradle", "build.gradle.kts", "pom.xml"),
     ),
     RiskRule(
         signal="critical_component_modified",
@@ -216,7 +288,7 @@ RULES: tuple[RiskRule, ...] = (
         recommendation="Run end-to-end integration tests for critical business workflows.",
         recommendation_type=RecommendationType.POLICY_BASED,
         threshold="1 file",
-        path_markers=("payment", "billing", "order", "user_service"),
+        path_markers=("payment/", "billing/", "order/", "checkout/"),
     ),
     RiskRule(
         signal="breaking_exported_interface",
@@ -248,78 +320,4 @@ RULES: tuple[RiskRule, ...] = (
         recommendation_type=RecommendationType.POLICY_BASED,
         threshold="> 10 imports",
     ),
-    RiskRule(
-        signal="high_fan_in_module",
-        name="High Fan-In Module (High Centrality)",
-        category="architecture",
-        description="Changed file is imported by more than 8 downstream modules.",
-        weight=0.18,
-        recommendation="Ensure thorough test coverage due to extensive downstream consumption.",
-        recommendation_type=RecommendationType.EVIDENCE_BACKED,
-        threshold="> 8 dependents",
-    ),
-    RiskRule(
-        signal="large_refactor",
-        name="Large Refactor Change",
-        category="architecture",
-        description="Change set touches >= 15 files qualifying as a large refactor.",
-        weight=0.16,
-        recommendation="Break pull request into smaller, isolated sub-PRs for safer review.",
-        recommendation_type=RecommendationType.GENERIC_BEST_PRACTICE,
-        threshold=">= 15 files",
-    ),
-    RiskRule(
-        signal="large_blast_radius",
-        name="Large Downstream Blast Radius",
-        category="architecture",
-        description="Transitive impact spans more than 20 downstream files.",
-        weight=0.20,
-        recommendation="Add integration tests for downstream components and validate on staging environment.",
-        recommendation_type=RecommendationType.EVIDENCE_BACKED,
-        threshold="> 20 files",
-    ),
-    RiskRule(
-        signal="multi_module_impact",
-        name="Multiple Modules Impacted",
-        category="architecture",
-        description="Change impact spans across 2 or more distinct architectural modules.",
-        weight=0.18,
-        recommendation="These components share dependency relationships and should be tested together.",
-        recommendation_type=RecommendationType.EVIDENCE_BACKED,
-        threshold="> 2 modules",
-    ),
-    RiskRule(
-        signal="god_class_modified",
-        name="God Class Modified",
-        category="architecture",
-        description="Modified class contains an unusually high number of methods/responsibilities.",
-        weight=0.14,
-        recommendation="Break god class down using Single Responsibility Principle.",
-        recommendation_type=RecommendationType.POLICY_BASED,
-        threshold=">= 8 methods",
-    ),
-
-    # Testing
-    RiskRule(
-        signal="missing_tests",
-        name="Missing Related Test Changes",
-        category="testing",
-        description="Production code was modified without any corresponding test changes.",
-        weight=0.14,
-        recommendation="Add unit tests covering modified business logic.",
-        recommendation_type=RecommendationType.EVIDENCE_BACKED,
-        threshold="0 tests",
-    ),
-    RiskRule(
-        signal="low_test_coverage",
-        name="Low Test Coverage Gap",
-        category="testing",
-        description="Modified files belong to modules with identified test coverage gaps.",
-        weight=0.12,
-        recommendation="Write automated regression tests for untracked source modules.",
-        recommendation_type=RecommendationType.POLICY_BASED,
-        threshold="0 test specs",
-    ),
 )
-
-

@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 import re
 import subprocess
-from pathlib import Path
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -25,6 +24,7 @@ _SAFE_GIT_REF = re.compile(r"^[A-Za-z0-9_.~^/@{}\-]+$")
 
 # Default subprocess timeout for git commands (seconds, can be overridden via env).
 import os
+
 _GIT_TIMEOUT = int(os.environ.get("CHANGEPILOT_GIT_TIMEOUT", "30"))
 
 

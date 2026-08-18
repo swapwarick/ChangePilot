@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 
 from app.models.graph import DependencyEdge, DependencyGraph, DependencyNode
 
-
 # ---------------------------------------------------------------------------
 # Result types
 # ---------------------------------------------------------------------------

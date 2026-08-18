@@ -18,7 +18,12 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.analysis.tree_sitter_parser import ImportSymbol, ParsedFileAST, TreeSitterCodeParser, is_generated_or_vendor
+from app.analysis.tree_sitter_parser import (
+    ImportSymbol,
+    ParsedFileAST,
+    TreeSitterCodeParser,
+    is_generated_or_vendor,
+)
 from app.database.tables import AnalysisJobRow, AnalysisRow, FileASTCacheRow, RepoKnowledgeGraphRow
 from app.graph.knowledge_graph import KnowledgeGraphBuilder
 from app.graph.neo4j_engine import Neo4jGraphEngine

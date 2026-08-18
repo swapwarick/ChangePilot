@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.tables import AnalysisRow
 from app.models.analysis import ChangeAnalysisResult
-from app.models.enums import AnalysisTrigger, RecommendationType, RiskLevel, StatementType
+from app.models.enums import AnalysisTrigger, RiskLevel, StatementType
 from app.models.graph import DependencyGraph
 from app.models.risk import (
     EvidenceStatement,

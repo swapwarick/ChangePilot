@@ -43,7 +43,7 @@ def _sync_schema_columns(sync_conn):
 
 
 async def _init_db_engine():
-    global _engine, _session_factory  # noqa: PLW0603
+    global _engine, _session_factory
     if _engine is not None:
         return _engine
 
@@ -87,7 +87,7 @@ async def _init_db_engine():
 
 
 def get_session_factory() -> async_sessionmaker[AsyncSession]:
-    global _session_factory  # noqa: PLW0603
+    global _session_factory
     if _session_factory is None:
         raise RuntimeError("Database engine not initialized yet.")
     return _session_factory

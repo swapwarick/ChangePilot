@@ -4,7 +4,18 @@ import sys
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import ai_providers, analysis, auth, export, github, health, jobs, local, policies, repositories
+from app.api.routes import (
+    ai_providers,
+    analysis,
+    auth,
+    export,
+    github,
+    health,
+    jobs,
+    local,
+    policies,
+    repositories,
+)
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 

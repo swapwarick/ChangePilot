@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import logging
 
+from app.analysis.flow_tracer import find_function_node_ids, trace_execution_flows
 from app.graph.blast_radius import BlastRadiusResult, compute_blast_radius
 from app.graph.centrality import find_bridge_nodes, find_hub_nodes
-from app.analysis.flow_tracer import find_function_node_ids, trace_execution_flows
 from app.models.graph import DependencyGraph
 from app.models.risk import RiskInput
 

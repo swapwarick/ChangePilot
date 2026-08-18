@@ -15,14 +15,13 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 
 from app.database.session import DbSession
-from app.database.tables import AnalysisRow, RepoKnowledgeGraphRow, RepositoryRow
+from app.database.tables import AnalysisRow, RepoKnowledgeGraphRow
 from app.models.export import AnalysisExportModel
 from app.repositories.analysis_repo import AnalysisRepository
 from app.repositories.repository_repo import RepositoryRepository

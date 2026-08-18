@@ -21,12 +21,11 @@ from sqlalchemy import delete, select
 
 from app.core.auth import (
     CurrentUser,
-    OptionalUser,
+    _decode_token,
     create_access_token,
     create_refresh_token,
     hash_password,
     verify_password,
-    _decode_token,
 )
 from app.core.config import get_settings
 from app.database.session import DbSession
@@ -250,8 +249,7 @@ async def refresh_token(payload: RefreshRequest, db: DbSession) -> TokenResponse
     # Normalize: SQLite returns naive datetimes — treat as UTC
     expires_at = session.expires_at
     if expires_at.tzinfo is None:
-        from datetime import timezone
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
+        expires_at = expires_at.replace(tzinfo=UTC)
     if expires_at < datetime.now(UTC):
         await db.delete(session)
         await db.commit()
