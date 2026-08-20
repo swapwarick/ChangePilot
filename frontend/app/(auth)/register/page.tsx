@@ -48,17 +48,7 @@ export default function RegisterPage() {
         {/* Header */}
         <div className="auth-header">
           <div className="auth-logo">
-            <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-              <rect width="32" height="32" rx="8" fill="url(#logoGrad2)" />
-              <path d="M8 22L16 10L24 22" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M11 18H21" stroke="white" strokeWidth="2" strokeLinecap="round" />
-              <defs>
-                <linearGradient id="logoGrad2" x1="0" y1="0" x2="32" y2="32">
-                  <stop offset="0%" stopColor="#6366f1" />
-                  <stop offset="100%" stopColor="#8b5cf6" />
-                </linearGradient>
-              </defs>
-            </svg>
+            <img src="/logo.jpg" alt="ChangePilot" style={{ width: 56, height: 56, borderRadius: 14, objectFit: "cover" }} />
           </div>
           <h1 className="auth-title">Create your account</h1>
           <p className="auth-subtitle">Free forever · 30 MB persistent storage</p>

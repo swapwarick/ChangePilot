@@ -557,9 +557,7 @@ export function Dashboard() {
       {/* Sidebar Navigation */}
       <aside className="hidden min-h-screen flex-col border-r border-border bg-surface/88 lg:flex">
         <div className="flex h-16 items-center gap-3 border-b border-border px-5">
-          <div className="grid size-8 place-items-center rounded-md bg-primary text-primary-foreground">
-            <Network data-icon="inline-start" />
-          </div>
+          <img src="/logo.jpg" alt="ChangePilot" className="size-8 rounded-md object-cover" />
           <div className="text-lg font-semibold">ChangePilot</div>
         </div>
 
