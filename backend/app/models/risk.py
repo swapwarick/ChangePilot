@@ -37,14 +37,28 @@ class RiskEvidence(BaseModel):
     confidence: float = 1.0
 
 
+class ImpactMetrics(BaseModel):
+    changed_files: int = 0
+    direct_dependents: int = 0
+    transitive_dependents: int = 0
+    unique_affected_components: int = 0
+    total_blast_radius: int = 0
+    dependency_edges: int = 0
+    affected_modules: list[str] = Field(default_factory=list)
+
+
 class RiskBreakdownItem(BaseModel):
     rule: str
     name: str = ""  # Human-readable rule name (e.g. "Authentication Modified")
     category: str
     points: int
+    raw_points: float = 0.0
     evidence: str
     affected_files: list[str] = Field(default_factory=list)
     threshold: str = ""
+    observed_value: str = ""
+    trigger: str = ""
+    status: str = "TRIGGERED"  # TRIGGERED / NOT_TRIGGERED
     recommendation: str = ""
     recommendation_type: RecommendationType = RecommendationType.POLICY_BASED
 
@@ -53,6 +67,7 @@ class RiskInput(BaseModel):
     changed_files: list[str]
     impacted_modules: list[str] = Field(default_factory=list)
     dependency_count: int = Field(default=0, ge=0)
+    impact_metrics: ImpactMetrics = Field(default_factory=ImpactMetrics)
     missing_tests: bool = False
     large_refactor: bool = False
     critical_modules: list[str] = Field(default_factory=list)
@@ -103,6 +118,7 @@ class RiskResult(BaseModel):
     is_calibrated: bool = False
     calibration_status: str = "Not statistically calibrated against historical production failure outcomes. Deterministic engineering index only."
     score_description: str = "Deterministic change-risk index based on repository evidence. This score is not a statistical probability of production failure."
+    impact_metrics: ImpactMetrics = Field(default_factory=ImpactMetrics)
     evidence: list[RiskEvidence] = Field(default_factory=list)
     statements: list[EvidenceStatement] = Field(default_factory=list)
     facts: list[EvidenceStatement] = Field(default_factory=list)

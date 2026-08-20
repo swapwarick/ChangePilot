@@ -21,6 +21,7 @@ class EdgeType(StrEnum):
 
 class FileClassification(StrEnum):
     ENTRYPOINT = "ENTRYPOINT"
+    FRAMEWORK_ENTRYPOINT = "FRAMEWORK_ENTRYPOINT"
     CLI_SCRIPT = "CLI_SCRIPT"
     EXAMPLE = "EXAMPLE"
     TEST = "TEST"
@@ -30,6 +31,18 @@ class FileClassification(StrEnum):
     SOURCE_MODULE = "SOURCE_MODULE"
     ORPHAN_CANDIDATE = "ORPHAN_CANDIDATE"
     ROUTE = "ROUTE"
+
+
+class GraphQualityStatus(StrEnum):
+    HEALTHY = "HEALTHY"
+    DEGRADED = "DEGRADED"
+    POOR = "POOR"
+
+
+class TestAnalysisState(StrEnum):
+    COVERAGE_VERIFIED = "COVERAGE_VERIFIED"
+    TEST_RELATIONSHIP_VERIFIED = "TEST_RELATIONSHIP_VERIFIED"
+    STRUCTURAL_GAP_INFERRED = "STRUCTURAL_GAP_INFERRED"
 
 
 class AIProviderKind(StrEnum):

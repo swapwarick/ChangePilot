@@ -93,8 +93,11 @@ def enrich_risk_input_with_graph_analysis(
         blast_result._flow_result = flow_result  # type: ignore[attr-defined]
 
     # --- Enrich risk input --------------------------------------------------------
+    impact_metrics = blast_result.to_impact_metrics(impacted_modules=risk_input.impacted_modules)
     enriched = risk_input.model_copy(
         update={
+            "dependency_count": blast_result.unique_affected_components_count,
+            "impact_metrics": impact_metrics,
             "blast_radius_depth": blast_result.max_depth_reached,
             "blast_radius_size": blast_result.total_impact_size,
             "hub_nodes_affected": hub_labels_in_blast[:5],

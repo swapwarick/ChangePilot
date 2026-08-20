@@ -4,9 +4,15 @@ from pydantic import BaseModel, Field
 class GraphHealth(BaseModel):
     node_count: int = 0
     edge_count: int = 0
+    valid_dependency_edge_count: int = 0
+    invalid_skipped_edge_count: int = 0
     self_edge_count: int = 0
     duplicate_edge_count: int = 0
+    total_internal_imports_attempted: int = 0
+    resolved_internal_imports: int = 0
+    resolution_rate: float = 1.0
     unresolved_imports: int = 0
+    graph_quality_status: str = "HEALTHY"  # HEALTHY, DEGRADED, POOR
     circular_dependency_count: int = 0
     orphan_candidates: int = 0
     total_source_modules: int = 0

@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 from app.models.enums import AnalysisTrigger
 from app.models.graph import DependencyGraph
-from app.models.risk import RiskResult
+from app.models.risk import ImpactMetrics, RiskResult
 
 
 class ChangeAnalysisRequest(BaseModel):
@@ -21,6 +21,7 @@ class ChangeAnalysisResult(BaseModel):
     trigger: AnalysisTrigger
     changed_files: list[str]
     impacted_modules: list[str]
+    impact_metrics: ImpactMetrics = Field(default_factory=ImpactMetrics)
     dependency_graph: DependencyGraph
     risk: RiskResult
     ai_report: str | None = None

@@ -141,6 +141,8 @@ class KnowledgeGraphBuilder:
         self_edge_count = 0
         duplicate_edge_count = 0
         unresolved_imports_count = 0
+        total_internal_imports_attempted = 0
+        resolved_internal_imports = 0
         seen_edge_triplets = set()
 
         for pf in valid_parsed_files:
@@ -370,13 +372,31 @@ class KnowledgeGraphBuilder:
 
             # File IMPORTS with cross-language package resolution
             for imp in pf.imports:
+                # Check if this is an attempted internal or package import
+                is_internal_attempt = (
+                    imp.source_module.startswith(".")
+                    or imp.is_relative
+                    or any(
+                        imp.source_module.startswith(pkg)
+                        for pkg in ("app", "features", "components", "lib", "types", "services", "models", "utils", "core", "domain")
+                    )
+                    or imp.source_module in package_file_map
+                )
+
                 target_path = PathNormalizer.resolve_import_path(
                     pf.file_path,
                     imp.source_module,
                     file_paths,
                     package_file_map=package_file_map,
                 )
+
+                if is_internal_attempt:
+                    total_internal_imports_attempted += 1
+
                 if target_path:
+                    if is_internal_attempt:
+                        resolved_internal_imports += 1
+
                     tgt_id = f"file:{target_path}"
                     triplet = (file_id, tgt_id, imp.import_type)
                     if triplet in seen_edge_triplets:
@@ -415,13 +435,17 @@ class KnowledgeGraphBuilder:
                             outgoing_degree[pf.file_path] += 1
                             incoming_degree[target_path] += 1
                 else:
-                    if (
-                        not imp.source_module.startswith(".")
-                        and not imp.is_relative
-                        and not imp.source_module.startswith("android.")
+                    if is_internal_attempt or (
+                        not imp.source_module.startswith("android.")
                         and not imp.source_module.startswith("java.")
+                        and not imp.source_module.startswith("javax.")
+                        and not imp.source_module.startswith("kotlin.")
+                        and not imp.source_module.startswith("kotlinx.")
                         and not imp.source_module.startswith("androidx.")
-                    ) or imp.source_module.startswith(".") or imp.is_relative:
+                        and not imp.source_module.startswith("react")
+                        and not imp.source_module.startswith("next")
+                        and not imp.source_module.startswith("@")
+                    ):
                         unresolved_imports_count += 1
 
         # Calculate Fan-In & Fan-Out
@@ -435,20 +459,46 @@ class KnowledgeGraphBuilder:
             valid_parsed_files, import_adj, incoming_degree, outgoing_degree, nodes
         )
 
+        total_internal_attempts = total_internal_imports_attempted or (resolved_internal_imports + unresolved_imports_count)
+        res_rate = round(resolved_internal_imports / total_internal_attempts, 4) if total_internal_attempts > 0 else 1.0
+
+        if res_rate >= 0.95 and unresolved_imports_count == 0:
+            quality_status = "HEALTHY"
+        elif res_rate >= 0.70:
+            quality_status = "DEGRADED"
+        else:
+            quality_status = "POOR"
+
+        valid_edges = len([e for e in edges if e.edge_type != EdgeType.SELF_IMPORT])
+        invalid_skipped = duplicate_edge_count + self_edge_count
+
+        warnings_list: list[str] = []
+        if self_edge_count > 0:
+            warnings_list.append(f"Detected {self_edge_count} self-import statement(s).")
+        if len(health_metrics.circular_dependencies) > 0:
+            warnings_list.append(f"Found {len(health_metrics.circular_dependencies)} circular dependency cycle(s).")
+        if quality_status != "HEALTHY":
+            warnings_list.append(
+                f"Graph quality is {quality_status} ({round(res_rate * 100, 1)}% resolution rate, {unresolved_imports_count} unresolved imports). Blast-radius confidence may be reduced."
+            )
+
         graph_health = GraphHealth(
             node_count=len(nodes),
             edge_count=len(edges),
+            valid_dependency_edge_count=valid_edges,
+            invalid_skipped_edge_count=invalid_skipped,
             self_edge_count=self_edge_count,
             duplicate_edge_count=duplicate_edge_count,
+            total_internal_imports_attempted=total_internal_attempts,
+            resolved_internal_imports=resolved_internal_imports,
+            resolution_rate=res_rate,
             unresolved_imports=unresolved_imports_count,
+            graph_quality_status=quality_status,
             circular_dependency_count=len(health_metrics.circular_dependencies),
             orphan_candidates=len(health_metrics.potential_orphan_candidates),
             total_source_modules=health_metrics.total_source_modules,
             invalid_paths=0,
-            warnings=[
-                f"Detected {self_edge_count} self-import statement(s).",
-                f"Found {len(health_metrics.circular_dependencies)} circular dependency cycle(s).",
-            ] if self_edge_count > 0 or len(health_metrics.circular_dependencies) > 0 else [],
+            warnings=warnings_list,
         )
 
         graph = DependencyGraph(nodes=list(nodes.values()), edges=edges, graph_health=graph_health)

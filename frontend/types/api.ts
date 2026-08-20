@@ -87,6 +87,16 @@ export type AnalysisJobStatus = {
   analysis_id?: string;
 };
 
+export type ImpactMetrics = {
+  changed_files: number;
+  direct_dependents: number;
+  transitive_dependents: number;
+  unique_affected_components: number;
+  total_blast_radius: number;
+  dependency_edges: number;
+  affected_modules: string[];
+};
+
 export type RiskEvidence = {
   signal: string;
   name?: string;
@@ -111,9 +121,15 @@ export type OrphanCandidateDetail = {
 export type GraphHealth = {
   node_count: number;
   edge_count: number;
+  valid_dependency_edge_count?: number;
+  invalid_skipped_edge_count?: number;
   self_edge_count: number;
   duplicate_edge_count: number;
+  total_internal_imports_attempted?: number;
+  resolved_internal_imports?: number;
+  resolution_rate?: number;
   unresolved_imports: number;
+  graph_quality_status?: "HEALTHY" | "DEGRADED" | "POOR";
   circular_dependency_count: number;
   orphan_candidates: number;
   total_source_modules?: number;
@@ -170,9 +186,13 @@ export type RiskBreakdownItem = {
   name?: string;
   category: string;
   points: number;
+  raw_points?: number;
   evidence: string;
   affected_files: string[];
   threshold?: string;
+  observed_value?: string;
+  trigger?: string;
+  status?: string;
   recommendation: string;
   recommendation_type?: RecommendationType;
 };
@@ -185,6 +205,7 @@ export type RiskResult = {
   is_calibrated?: boolean;
   calibration_status?: string;
   score_description?: string;
+  impact_metrics?: ImpactMetrics;
   evidence: RiskEvidence[];
   statements?: EvidenceStatement[];
   facts?: EvidenceStatement[];
@@ -209,6 +230,7 @@ export type ChangeAnalysisResult = {
   trigger: string;
   changed_files: string[];
   impacted_modules: string[];
+  impact_metrics?: ImpactMetrics;
   dependency_graph: DependencyGraph;
   risk: RiskResult;
   ai_report?: string;

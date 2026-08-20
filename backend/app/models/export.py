@@ -132,8 +132,12 @@ class ExportDependencyPath(BaseModel):
 
 class ExportBlastRadius(BaseModel):
     direct_impact: int = 0
+    direct_dependents: int = 0
+    transitive_dependents: int = 0
+    unique_affected_components: int = 0
     indirect_impact: int = 0
     total_impact: int = 0
+    dependency_edges: int = 0
     impacted_files: list[str] = Field(default_factory=list)
     impacted_modules: list[str] = Field(default_factory=list)
     dependency_paths: list[ExportDependencyPath] = Field(default_factory=list)
@@ -188,6 +192,12 @@ class ExportRepositoryHealth(BaseModel):
 class ExportGraphHealth(BaseModel):
     nodes: int = 0
     edges: int = 0
+    valid_dependency_edges: int = 0
+    invalid_skipped_edges: int = 0
+    total_internal_imports_attempted: int = 0
+    resolved_internal_imports: int = 0
+    resolution_rate: float = 1.0
+    graph_quality_status: str = "HEALTHY"
     circular_dependencies: int = 0
     circular_dependency_cycles: list[list[str]] = Field(default_factory=list)
     orphan_candidates: int = 0
@@ -410,14 +420,23 @@ class AnalysisExportModel(BaseModel):
                         queue.append((next_id, depth + 1, node_label))
 
         dep_paths.sort(key=lambda x: (x.depth, x.file_or_module))
-        direct_impact = len(changed_files_raw)
-        indirect_impact = len(indirect_nodes)
-        total_impact = direct_impact + indirect_impact
+        im = getattr(analysis, "impact_metrics", None) or getattr(risk, "impact_metrics", None)
+        direct_impact = im.changed_files if (im and im.changed_files > 0) else len(changed_files_raw)
+        direct_dependents = im.direct_dependents if (im and im.direct_dependents > 0) else len([d for d in dep_paths if d.depth == 1])
+        transitive_dependents = im.transitive_dependents if (im and im.transitive_dependents > 0) else len([d for d in dep_paths if d.depth > 1])
+        unique_affected_components = im.unique_affected_components if (im and im.unique_affected_components > 0) else len(indirect_nodes)
+        indirect_impact = unique_affected_components
+        total_impact = im.total_blast_radius if (im and im.total_blast_radius > 0) else (direct_impact + indirect_impact)
+        dep_edges = im.dependency_edges if (im and im.dependency_edges > 0) else len(dep_paths)
 
         blast_radius = ExportBlastRadius(
             direct_impact=direct_impact,
+            direct_dependents=direct_dependents,
+            transitive_dependents=transitive_dependents,
+            unique_affected_components=unique_affected_components,
             indirect_impact=indirect_impact,
             total_impact=total_impact,
+            dependency_edges=dep_edges,
             impacted_files=sorted(list(direct_set | indirect_nodes)),
             impacted_modules=impacted_modules_raw or sorted(set([f.split("/")[0] for f in changed_files_raw if "/" in f] or ["root"])),
             dependency_paths=dep_paths,
@@ -970,6 +989,12 @@ class AnalysisExportModel(BaseModel):
         graph_health_model = ExportGraphHealth(
             nodes=gh.node_count if gh else len(graph.nodes or []),
             edges=gh.edge_count if gh else len(graph.edges or []),
+            valid_dependency_edges=gh.valid_dependency_edge_count if gh else len(graph.edges or []),
+            invalid_skipped_edges=gh.invalid_skipped_edge_count if gh else 0,
+            total_internal_imports_attempted=gh.total_internal_imports_attempted if gh else 0,
+            resolved_internal_imports=gh.resolved_internal_imports if gh else 0,
+            resolution_rate=gh.resolution_rate if gh else 1.0,
+            graph_quality_status=gh.graph_quality_status if gh else "HEALTHY",
             circular_dependencies=gh.circular_dependency_count if gh else len(circular_raw),
             circular_dependency_cycles=circular_raw,
             orphan_candidates=gh.orphan_candidates if gh else len(orphan_candidates_raw),

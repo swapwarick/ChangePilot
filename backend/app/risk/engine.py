@@ -4,6 +4,7 @@ from typing import Any
 from app.models.enums import RecommendationType, RiskLevel, StatementType
 from app.models.risk import (
     EvidenceStatement,
+    ImpactMetrics,
     RiskBreakdownItem,
     RiskEvidence,
     RiskInput,
@@ -29,28 +30,53 @@ class DeterministicRiskEngine:
         evidence = self._collect_rule_evidence(risk_input.changed_files, custom_rules=custom_rules)
 
         # Dynamic graph-based evidence metrics
-        if risk_input.dependency_count > 0:
-            dep_score = min(risk_input.dependency_count / 20.0, 1.0)
+        if not risk_input.impact_metrics or (risk_input.impact_metrics.changed_files == 0 and risk_input.changed_files):
+            risk_input.impact_metrics = ImpactMetrics(
+                changed_files=len(risk_input.changed_files),
+                unique_affected_components=risk_input.dependency_count,
+                total_blast_radius=len(risk_input.changed_files) + risk_input.dependency_count,
+                affected_modules=risk_input.impacted_modules or [],
+            )
+
+        unique_downstream = (
+            risk_input.impact_metrics.unique_affected_components
+            if risk_input.impact_metrics and risk_input.impact_metrics.unique_affected_components > 0
+            else risk_input.dependency_count
+        )
+        traversed_edges = (
+            risk_input.impact_metrics.dependency_edges
+            if risk_input.impact_metrics and risk_input.impact_metrics.dependency_edges > 0
+            else 0
+        )
+
+        if unique_downstream > 0:
+            dep_score = min(unique_downstream / 20.0, 1.0)
             ff_rec = (
                 "Feature flag deployment is available and may reduce rollback risk."
                 if ff_detected
                 else "Add regression tests covering downstream consumers and validate in a staging environment."
             )
             rec_type = RecommendationType.EVIDENCE_BACKED if ff_detected else RecommendationType.POLICY_BASED
+            
+            desc = f"{unique_downstream} unique downstream component(s) impacted"
+            if traversed_edges > 0:
+                desc += f" across {traversed_edges} dependency edge(s)"
+            desc += " by this change."
+
             evidence.append(
                 RiskEvidence(
                     signal="large_blast_radius",
                     name="Large Downstream Blast Radius",
                     category="architecture",
-                    description=f"{risk_input.dependency_count} downstream component dependencies are impacted by this change.",
+                    description=desc,
                     weight=0.18,
                     score=dep_score,
                     recommendation=ff_rec,
                     recommendation_type=rec_type,
-                    threshold="> 10 dependencies",
+                    threshold="> 10 unique components",
                     rule="large_blast_radius",
                     evidence_type="graph_metric",
-                    evidence_value=str(risk_input.dependency_count),
+                    evidence_value=f"{unique_downstream}_components",
                 )
             )
 
@@ -58,9 +84,9 @@ class DeterministicRiskEngine:
             evidence.append(
                 RiskEvidence(
                     signal="missing_tests",
-                    name="Missing Related Test Changes",
+                    name="Potential Test Gap",
                     category="testing",
-                    description="No related unit test or test spec modifications were detected alongside source changes.",
+                    description="No related unit test or test specification modifications were detected alongside source changes. Runtime coverage data is unavailable.",
                     weight=0.14,
                     score=1.0,
                     recommendation="Add unit tests covering modified business logic in changed components.",
@@ -77,7 +103,7 @@ class DeterministicRiskEngine:
             if not any(f.lower().startswith(p) or f"/{p}" in f.lower() for p in (".idea/", ".gradle/", "build/", ".vscode/", "gradle/"))
             and not any(f.lower().endswith(ext) for ext in (".png", ".webp", ".jpg", ".jpeg", ".ico", ".svg", ".jar", ".aar", ".bak", ".iml", "~"))
         ]
-        if len(arch_relevant) >= 15 or risk_input.large_refactor and len(arch_relevant) >= 15:
+        if len(arch_relevant) >= 15 or (risk_input.large_refactor and len(arch_relevant) >= 15):
             evidence.append(
                 RiskEvidence(
                     signal="large_refactor",
@@ -206,8 +232,9 @@ class DeterministicRiskEngine:
         risk_breakdown: list[RiskBreakdownItem] = []
 
         for item in sorted(evidence, key=lambda i: i.weight * i.score, reverse=True):
-            points = int(round(item.weight * item.score * 100))
-            raw_rule_score += points
+            raw_pts = item.weight * item.score * 100
+            points = int(round(raw_pts))
+            raw_rule_score += raw_pts
 
             risk_breakdown.append(
                 RiskBreakdownItem(
@@ -215,9 +242,13 @@ class DeterministicRiskEngine:
                     name=item.name or item.rule or item.signal,
                     category=item.category,
                     points=points,
+                    raw_points=round(raw_pts, 2),
                     evidence=item.description,
                     affected_files=item.file_paths,
                     threshold=item.threshold,
+                    observed_value=item.evidence_value or item.description,
+                    trigger=item.signal,
+                    status="TRIGGERED",
                     recommendation=item.recommendation,
                     recommendation_type=item.recommendation_type,
                 )
@@ -261,6 +292,7 @@ class DeterministicRiskEngine:
             is_calibrated=False,
             calibration_status="Not statistically calibrated against historical production failure outcomes. Deterministic engineering index only.",
             score_description="Deterministic change-risk index based on repository evidence. This score is not a statistical probability of production failure.",
+            impact_metrics=risk_input.impact_metrics,
             evidence=evidence,
             statements=statements,
             facts=facts,
@@ -302,12 +334,24 @@ class DeterministicRiskEngine:
         )
         fact_idx += 1
 
-        if risk_input.dependency_count > 0:
+        im = risk_input.impact_metrics
+        if im and im.unique_affected_components > 0:
             facts.append(
                 EvidenceStatement(
                     id=f"FACT-{fact_idx:03d}",
                     statement_type=StatementType.FACT,
-                    claim=f"{risk_input.dependency_count} downstream component dependencies exist in knowledge graph.",
+                    claim=f"{im.unique_affected_components} unique downstream component(s) impacted across {im.dependency_edges} dependency edge(s). Total blast radius: {im.total_blast_radius}.",
+                    source_evidence="AST Dependency Graph BFS traversal",
+                    traceability_ref="graph_traversal",
+                )
+            )
+            fact_idx += 1
+        elif risk_input.dependency_count > 0:
+            facts.append(
+                EvidenceStatement(
+                    id=f"FACT-{fact_idx:03d}",
+                    statement_type=StatementType.FACT,
+                    claim=f"{risk_input.dependency_count} downstream component(s) impacted by this change.",
                     source_evidence="AST Dependency Graph traversal",
                     traceability_ref="graph_traversal",
                 )
@@ -387,13 +431,15 @@ class DeterministicRiskEngine:
             fact_idx += 1
 
         # --- INFERENCES (Deterministic conclusions derived from facts) ---
-        if risk_input.dependency_count > 10:
+        downstream_cnt = im.unique_affected_components if im and im.unique_affected_components > 0 else risk_input.dependency_count
+        if downstream_cnt > 10:
+            edge_desc = f" across {im.dependency_edges} dependency edges" if im and im.dependency_edges > 0 else ""
             inferences.append(
                 EvidenceStatement(
                     id=f"INF-{inf_idx:03d}",
                     statement_type=StatementType.INFERENCE,
-                    claim=f"High downstream blast radius: changing these components may introduce regression risk across {risk_input.dependency_count} dependent components.",
-                    source_evidence=f"Derived from FACT-002 ({risk_input.dependency_count} dependencies)",
+                    claim=f"High downstream blast radius: changing these components may introduce regression risk across {downstream_cnt} unique dependent components{edge_desc}.",
+                    source_evidence=f"Derived from blast radius traversal ({downstream_cnt} unique components)",
                     traceability_ref="rule:large_blast_radius",
                 )
             )
@@ -404,8 +450,8 @@ class DeterministicRiskEngine:
                 EvidenceStatement(
                     id=f"INF-{inf_idx:03d}",
                     statement_type=StatementType.INFERENCE,
-                    claim="Test coverage gap: production code changes lack accompanying unit test or test specification modifications.",
-                    source_evidence="Diff analysis: 0 test files modified",
+                    claim="Potential test gap: production code changes lack accompanying unit test or test specification modifications in this commit set. Runtime coverage data was unavailable.",
+                    source_evidence="Diff analysis: 0 test files modified in commit set",
                     traceability_ref="rule:missing_tests",
                 )
             )
@@ -448,7 +494,7 @@ class DeterministicRiskEngine:
                         recommendation_type=ev.recommendation_type,
                         claim=ev.recommendation,
                         source_evidence=f"Triggered by {ev.rule or ev.signal}: {ev.description}",
-                        traceability_ref=ev.rule or ev.signal,
+                        traceability_ref=f"rule:{ev.rule or ev.signal}",
                         affected_files=ev.file_paths,
                     )
                 )
@@ -458,9 +504,14 @@ class DeterministicRiskEngine:
 
     def _generate_potential_scenarios(self, risk_input: RiskInput, evidence: list[RiskEvidence]) -> list[str]:
         scenarios: list[str] = []
-        if risk_input.dependency_count > 0:
+        downstream_cnt = (
+            risk_input.impact_metrics.unique_affected_components
+            if risk_input.impact_metrics and risk_input.impact_metrics.unique_affected_components > 0
+            else risk_input.dependency_count
+        )
+        if downstream_cnt > 0:
             scenarios.append(
-                f"Potential Scenario: Downstream consumers may be affected because {risk_input.dependency_count} dependent components rely on the modified interfaces."
+                f"Potential Scenario: Downstream consumers may be affected because {downstream_cnt} dependent components rely on the modified interfaces."
             )
         if risk_input.missing_tests:
             scenarios.append(
@@ -494,7 +545,7 @@ class DeterministicRiskEngine:
                 review_areas.append({
                     "review_area": path,
                     "suggested_reviewer": None,
-                    "ownership_note": "Reviewer ownership could not be determined from available repository evidence.",
+                    "ownership_note": "Ownership data unavailable — CODEOWNERS/team mapping could not be determined from available repository evidence.",
                 })
         return review_areas
 
@@ -597,3 +648,6 @@ class DeterministicRiskEngine:
         if risk_input.dependency_count:
             completeness += 0.05
         return round(min(completeness, 0.98), 3)
+
+
+RiskEngine = DeterministicRiskEngine

@@ -539,7 +539,8 @@ class ExportService:
             lines.append("| Review Area | Suggested Reviewer | Evidence |")
             lines.append("|-------------|-------------------|----------|")
             for r in model.reviewer_evidence:
-                lines.append(f"| {r.get('review_area', '')} | {r.get('suggested_reviewer', '—')} | {r.get('evidence', '')} |")
+                reviewer_text = r.get("suggested_reviewer") or r.get("ownership_note") or "Ownership data unavailable — CODEOWNERS/team mapping not detected."
+                lines.append(f"| {r.get('review_area', '')} | {reviewer_text} | {r.get('evidence', '')} |")
             lines.append("")
         rule()
 
@@ -1027,12 +1028,15 @@ class ExportService:
         story.append(hr())
         br_summary_data = [
             ["Metric", "Value", "Interpretation"],
-            ["Direct Impact", f"{model.blast_radius.direct_impact} files", "Directly modified in commit diff"],
-            ["Transitive Impact", f"{model.blast_radius.indirect_impact} components", "Downstream dependents reachable through valid source imports"],
-            ["Total Blast Radius", f"{model.blast_radius.total_impact} components", "Total architectural surface exposed to change"],
+            ["Direct Impact (Changed Files)", f"{model.blast_radius.direct_impact} files", "Directly modified in commit diff"],
+            ["Direct Downstream Components", f"{model.blast_radius.direct_dependents} components", "Directly importing modified files at depth 1"],
+            ["Transitive Downstream Components", f"{model.blast_radius.transitive_dependents} components", "Indirectly dependent components at depth >= 2"],
+            ["Total Unique Downstream Components", f"{model.blast_radius.unique_affected_components} components", "Total unique downstream components impacted"],
+            ["Total Blast Radius", f"{model.blast_radius.total_impact} components", "Direct changed files + unique downstream components"],
+            ["Traversed Dependency Edges", f"{model.blast_radius.dependency_edges} edges", "Total dependency edges traversed during impact analysis"],
             ["Impacted Modules", ", ".join(model.blast_radius.impacted_modules) or "root", "Architectural module boundaries crossed"],
         ]
-        br_sum_table = Table(br_summary_data, colWidths=["25%", "25%", "50%"])
+        br_sum_table = Table(br_summary_data, colWidths=["32%", "24%", "44%"])
         br_sum_table.setStyle(standard_table_style())
         story.append(br_sum_table)
         story.append(Spacer(1, 8))
@@ -1084,6 +1088,8 @@ class ExportService:
         gh_data = [
             ["Graph Metric", "Value", "Graph Metric", "Value"],
             ["Total AST Nodes", str(gh.nodes), "Total Dependency Edges", str(gh.edges)],
+            ["Valid Dependency Edges", str(gh.valid_dependency_edges or gh.edges), "Invalid / Skipped Edges", str(gh.invalid_skipped_edges or 0)],
+            ["Resolution Rate", f"{round(gh.resolution_rate * 100, 1)}%", "Graph Quality Status", gh.graph_quality_status],
             ["Circular Dependencies", str(gh.circular_dependencies), "Duplicate Edges", str(gh.duplicate_edges)],
             ["Unresolved Imports", str(gh.unresolved_imports), "Self-Importing Nodes", str(gh.self_imports)],
             ["Potential Orphan Candidates", str(gh.orphan_candidates), "Invalid AST Paths", str(gh.invalid_paths)],
@@ -1092,6 +1098,27 @@ class ExportService:
         gh_table.setStyle(standard_table_style())
         story.append(gh_table)
         story.append(Spacer(1, 8))
+
+        if gh.graph_quality_status != "HEALTHY":
+            qual_warning_data = [[
+                Paragraph(
+                    f"<b>GRAPH QUALITY WARNING: Status is {gh.graph_quality_status} "
+                    f"({round(gh.resolution_rate * 100, 1)}% resolution rate, {gh.unresolved_imports} unresolved imports). "
+                    "Blast-radius confidence may be reduced due to external packages or unmapped workspace path aliases.</b>",
+                    ParagraphStyle("QualWarn", parent=style_body, textColor=colors.HexColor("#991b1b")),
+                )
+            ]]
+            qual_warn_table = Table(qual_warning_data, colWidths=["100%"])
+            qual_warn_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#fef2f2")),
+                ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#f87171")),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ]))
+            story.append(qual_warn_table)
+            story.append(Spacer(1, 8))
 
         # 6.1 Unresolved Imports
         story.append(Paragraph("6.1 Unresolved Imports", style_h2))
@@ -1215,7 +1242,9 @@ class ExportService:
         rh_data = [
             ["Category", "Score", "Weight", "Category Evidence & Recommendations"],
         ]
+        cat_scores = {}
         for cat, det in model.repository_health.health_breakdown.items():
+            cat_scores[cat] = det.score
             ev_summary = "; ".join(det.evidence[:2]) if det.evidence else "Within healthy thresholds"
             rh_data.append([
                 Paragraph(f"<b>{cat}</b>", style_body),
@@ -1226,6 +1255,18 @@ class ExportService:
         rh_table = Table(rh_data, colWidths=["22%", "16%", "12%", "50%"])
         rh_table.setStyle(standard_table_style("#065f46"))
         story.append(rh_table)
+        story.append(Spacer(1, 4))
+
+        arch_s = cat_scores.get("Architecture", 100)
+        dep_s = cat_scores.get("Dependencies", 100)
+        test_s = cat_scores.get("Testing", 100)
+        sec_s = cat_scores.get("Security", 100)
+        maint_s = cat_scores.get("Maintainability", 100)
+        formula_str = (
+            f"<b>Formula Verification:</b> Overall = round({arch_s}×0.25 + {dep_s}×0.20 + {test_s}×0.20 + {sec_s}×0.20 + {maint_s}×0.15) "
+            f"= <b>{model.repository_health.health_score}/100</b>"
+        )
+        story.append(Paragraph(formula_str, style_caption))
         story.append(Spacer(1, 10))
 
         # Section 9: Rollback & Reviewer Evidence
@@ -1243,9 +1284,10 @@ class ExportService:
         if model.reviewer_evidence:
             rv_data = [["Review Area", "Suggested Reviewer", "Ownership Evidence"]]
             for r in model.reviewer_evidence:
+                reviewer_text = r.get("suggested_reviewer") or r.get("ownership_note") or "Ownership data unavailable — CODEOWNERS/team mapping not detected."
                 rv_data.append([
                     Paragraph(str(r.get("review_area") or "—"), style_body_bold),
-                    Paragraph(str(r.get("suggested_reviewer") or "—"), style_mono),
+                    Paragraph(str(reviewer_text), style_mono),
                     Paragraph(str(r.get("evidence") or "—"), style_body),
                 ])
             rv_table = Table(rv_data, colWidths=["30%", "30%", "40%"])

@@ -90,11 +90,21 @@ SCRIPT_FILENAMES = {
     "script.py", "scripts.py", "run.py", "seed.py", "build.py"
 }
 
+FRAMEWORK_ENTRYPOINT_FILENAMES = {
+    # Next.js / React Runtime Framework entrypoints
+    "middleware.ts", "middleware.js", "instrumentation.ts", "instrumentation.js",
+    "global-error.tsx", "global-error.jsx", "template.tsx", "default.tsx",
+    # Python Frameworks & Database/Worker runtime entrypoints
+    "__main__.py", "env.py", "tasks.py", "worker.py", "analysis_worker.py",
+    "session.py", "database.py", "celery.py", "conftest.py", "manage.py",
+}
+
 ENTRYPOINT_FILENAMES = {
     "main.py", "app.py", "server.py", "index.py", "cli.py", "worker.py",
     "main.ts", "main.tsx", "server.ts", "server.tsx", "index.ts", "index.tsx",
     "app.tsx", "app.ts", "main.js", "main.jsx", "server.js", "server.jsx",
     "index.js", "index.jsx", "app.js", "app.jsx", "worker.js", "worker.ts",
+    "tasks.py", "analysis_worker.py", "env.py", "middleware.ts", "middleware.js",
     "cli.ts", "cli.js", "client.ts", "client.js", "client.py", "sdk.ts",
     "sdk.js", "sdk.py", "api-client.ts", "api_client.py",
     "MainActivity.kt", "MainApplication.kt", "App.kt", "Application.kt"
@@ -276,7 +286,7 @@ def classify_file(
     ):
         return FileClassification.CONFIGURATION
 
-    # 7. ENTRYPOINTS & WEB ROUTES
+    # 7. FRAMEWORK ENTRYPOINTS, ROUTES & STANDARD ENTRYPOINTS
     # Manifest / Android Entrypoints
     if all_manifest_entrypoints:
         if stem_lower in {e.lower() for e in all_manifest_entrypoints} or filename_lower in {e.lower() for e in all_manifest_entrypoints}:
@@ -299,15 +309,27 @@ def classify_file(
             return FileClassification.ENTRYPOINT
 
     # Web framework routes (Next.js / Nuxt / Remix)
-    if filename_lower in ("page.tsx", "page.jsx", "page.ts", "page.js", "layout.tsx", "layout.jsx", "route.ts", "route.js", "loading.tsx", "error.tsx", "not-found.tsx"):
+    if filename_lower in ("page.tsx", "page.jsx", "page.ts", "page.js", "layout.tsx", "layout.jsx", "route.ts", "route.js", "loading.tsx", "error.tsx", "not-found.tsx", "global-error.tsx", "template.tsx", "default.tsx"):
         return FileClassification.ROUTE
 
     if any(p in ("pages", "routes", "controllers", "api", "endpoints") for p in parts_lower):
         return FileClassification.ROUTE
 
+    # Framework & Runtime Entrypoints (Next.js middleware, Alembic env, workers, tasks, database session)
+    if filename_lower in FRAMEWORK_ENTRYPOINT_FILENAMES:
+        if filename_lower == "env.py" and any("alembic" in p for p in parts_lower):
+            return FileClassification.CONFIGURATION
+        if filename_lower in ("session.py", "database.py") and any("database" in p or "db" in p for p in parts_lower):
+            return FileClassification.CONFIGURATION
+        return FileClassification.FRAMEWORK_ENTRYPOINT
+
     # Standard Application / Server / Client / SDK / Worker Entrypoints
     if filename in ENTRYPOINT_FILENAMES or filename_lower in ENTRYPOINT_FILENAMES:
         return FileClassification.ENTRYPOINT
+
+    # Worker / Queue / Celery modules in workers/ or tasks/ directory
+    if any(p in ("workers", "tasks", "jobs", "queues") for p in parts_lower) and suffix in SOURCE_EXTENSIONS:
+        return FileClassification.FRAMEWORK_ENTRYPOINT
 
     # Client SDK files in src/ (e.g. src/client.ts, src/diary/client.ts)
     if stem_lower in ("client", "sdk", "api_client", "api-client", "agent-client") and suffix in SOURCE_EXTENSIONS:

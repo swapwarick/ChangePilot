@@ -192,15 +192,37 @@ class PathNormalizer:
         # 3. Relative import path
         if clean_src.startswith("."):
             current_dir = "/".join(current_file.replace("\\", "/").split("/")[:-1])
-            combined = f"{current_dir}/{clean_src}" if current_dir else clean_src
+            rel_path = clean_src
+            if rel_path.startswith("./"):
+                rel_path = rel_path[2:]
+            elif rel_path.startswith("."):
+                leading_dots = len(rel_path) - len(rel_path.lstrip("."))
+                stripped = rel_path.lstrip(".")
+                if leading_dots == 1:
+                    rel_path = stripped
+                else:
+                    rel_path = ("../" * (leading_dots - 1)) + stripped
+            combined = f"{current_dir}/{rel_path}" if current_dir else rel_path
             norm = PathNormalizer.normalize_path(combined)
             return PathNormalizer._match_candidates(norm, all_files)
 
-        # 4. Standard path match
+        # 4. Standard path match & Python module dot-to-slash match
         norm = PathNormalizer.normalize_path(clean_src)
         match = PathNormalizer._match_candidates(norm, all_files)
         if match:
             return match
+
+        if "." in clean_src:
+            dot_as_slash = clean_src.replace(".", "/")
+            match = PathNormalizer._match_candidates(dot_as_slash, all_files)
+            if match:
+                return match
+            # Also check if any file in all_files ends with the dotted module path
+            for ext in (".py", ".ts", ".tsx", ".js", ".jsx", ".kt", ".java"):
+                target_suffix = f"{dot_as_slash}{ext}"
+                for file_path in all_files:
+                    if file_path == target_suffix or file_path.endswith(f"/{target_suffix}"):
+                        return file_path
 
         # 5. Java / Kotlin Package Path Matching (e.g. com/example/data/UserRepository)
         pkg_as_path = clean_src.replace(".", "/")

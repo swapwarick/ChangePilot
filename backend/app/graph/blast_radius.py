@@ -12,6 +12,7 @@ from collections import deque
 from dataclasses import dataclass, field
 
 from app.models.graph import DependencyEdge, DependencyGraph, DependencyNode
+from app.models.risk import ImpactMetrics
 
 # ---------------------------------------------------------------------------
 # Result types
@@ -43,6 +44,31 @@ class BlastRadiusResult:
     total_impact_size: int = 0
     # Detailed traversal paths explaining why nodes are impacted
     dependency_paths: list[str] = field(default_factory=list)
+    # Total dependency edges traversed during BFS
+    edge_count_traversed: int = 0
+
+    @property
+    def direct_dependents_count(self) -> int:
+        return len([n for n in self.impacted_nodes if n.depth == 1])
+
+    @property
+    def transitive_dependents_count(self) -> int:
+        return len([n for n in self.impacted_nodes if n.depth > 1])
+
+    @property
+    def unique_affected_components_count(self) -> int:
+        return len(self.impacted_nodes)
+
+    def to_impact_metrics(self, impacted_modules: list[str] | None = None) -> ImpactMetrics:
+        return ImpactMetrics(
+            changed_files=len(self.changed_nodes),
+            direct_dependents=self.direct_dependents_count,
+            transitive_dependents=self.transitive_dependents_count,
+            unique_affected_components=self.unique_affected_components_count,
+            total_blast_radius=len(self.changed_nodes) + len(self.impacted_nodes),
+            dependency_edges=self.edge_count_traversed or len(self.dependency_paths),
+            affected_modules=impacted_modules or [],
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -91,20 +117,27 @@ def compute_blast_radius(
     # Queue contains: (current_id, depth, path_string)
     queue: deque[tuple[str, int, str]] = deque()
     for nid in changed_node_ids:
-        if nid in node_by_id:
-            queue.append((nid, 0, nid))
-            visited.add(nid)
-            node = node_by_id[nid]
-            result.changed_nodes.append(
-                BlastRadiusNode(
-                    node_id=nid,
-                    label=node.label,
-                    kind=node.kind,
-                    path=node.path,
-                    depth=0,
-                    is_critical=node.is_critical,
+        target_node = node_by_id.get(nid) or node_by_id.get(f"file:{nid}")
+        if not target_node:
+            for n in graph.nodes:
+                if n.path == nid or (n.path and n.path.endswith(f"/{nid}")):
+                    target_node = n
+                    break
+        if target_node:
+            actual_nid = target_node.id
+            if actual_nid not in visited:
+                queue.append((actual_nid, 0, actual_nid))
+                visited.add(actual_nid)
+                result.changed_nodes.append(
+                    BlastRadiusNode(
+                        node_id=actual_nid,
+                        label=target_node.label,
+                        kind=target_node.kind,
+                        path=target_node.path,
+                        depth=0,
+                        is_critical=target_node.is_critical,
+                    )
                 )
-            )
 
     max_depth_reached = 0
 
@@ -147,6 +180,7 @@ def compute_blast_radius(
 
     result.max_depth_reached = max_depth_reached
     result.total_impact_size = len(result.changed_nodes) + len(result.impacted_nodes)
+    result.edge_count_traversed = len(result.dependency_paths)
     return result
 
 

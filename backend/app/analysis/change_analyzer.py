@@ -82,10 +82,19 @@ class ChangeAnalyzer:
         ]
 
         # --- 3. Base risk input (always populated) ------------------------------------
+        from app.models.risk import ImpactMetrics
+        base_impact = ImpactMetrics(
+            changed_files=len(request.changed_files),
+            total_blast_radius=len(request.changed_files),
+            dependency_edges=len(graph.edges),
+            affected_modules=impacted_modules,
+        )
+
         risk_input = RiskInput(
             changed_files=request.changed_files,
             impacted_modules=impacted_modules,
-            dependency_count=len(graph.edges),
+            dependency_count=0,
+            impact_metrics=base_impact,
             missing_tests=not any(
                 "test" in path.lower() or "spec" in path.lower()
                 for path in request.changed_files
@@ -117,6 +126,7 @@ class ChangeAnalyzer:
             trigger=request.trigger,
             changed_files=request.changed_files,
             impacted_modules=impacted_modules,
+            impact_metrics=risk.impact_metrics or risk_input.impact_metrics,
             dependency_graph=graph,
             risk=risk,
         )
