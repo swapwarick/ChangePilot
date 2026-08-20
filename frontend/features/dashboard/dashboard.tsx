@@ -67,6 +67,13 @@ import { UserMenu } from "@/components/user-menu";
 import { AIProviderConfig, ChangeAnalysisResult, PolicyComparisonResult, PolicyRuleConfig, RepoKnowledgeGraph, RiskBreakdownItem, RiskPolicy } from "@/types/api";
 import { getApiBaseUrl } from "@/lib/api-config";
 import { authHeader } from "@/lib/auth-client";
+import { useABTest } from "@/lib/ab-testing";
+import {
+  EXPERIMENT_HEADER_LAYOUT,
+  EXPERIMENT_RISK_DISPLAY,
+  EXPERIMENT_ANALYSIS_DISPLAY,
+  EXPERIMENT_ONBOARDING_CTA,
+} from "@/lib/ab-experiments";
 
 const navItems = [
   { label: "Dashboard", icon: LayoutDashboard },
@@ -110,6 +117,12 @@ function Donut({ score = 0 }: { score?: number }) {
 export function Dashboard() {
   const [activeTab, setActiveTab] = useState<string>("Dashboard");
   const [globalSearchQuery, setGlobalSearchQuery] = useState("");
+
+  // ── A/B Experiments ──────────────────────────────────────────────────────
+  const { variant: headerVariant, track: trackHeader } = useABTest(EXPERIMENT_HEADER_LAYOUT);
+  const { variant: riskVariant, track: trackRisk } = useABTest(EXPERIMENT_RISK_DISPLAY);
+  const { variant: analysisVariant, track: trackAnalysis } = useABTest(EXPERIMENT_ANALYSIS_DISPLAY);
+  const { variant: ctaVariant, track: trackCTA } = useABTest(EXPERIMENT_ONBOARDING_CTA);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [activeRepoId, setActiveRepoId] = useState<string | null>(null);
@@ -614,10 +627,27 @@ export function Dashboard() {
             )}
           </label>
           <div className="flex items-center justify-end gap-2">
-            <Button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 bg-gradient-to-r from-emerald-600 to-indigo-600 hover:from-emerald-700 hover:to-indigo-700 text-white shadow-xs">
-              <FolderCode className="size-4" />
-              Scan Repository / Local Folder
-            </Button>
+            {/* Experiment: onboarding_cta — topbar button variant */}
+            {ctaVariant === "button" && (
+              <Button
+                onClick={() => { setIsModalOpen(true); trackCTA("cta_click", { location: "topbar" }); }}
+                className="flex items-center gap-2 bg-gradient-to-r from-emerald-600 to-indigo-600 hover:from-emerald-700 hover:to-indigo-700 text-white shadow-xs"
+              >
+                <FolderCode className="size-4" />
+                Scan Repository / Local Folder
+              </Button>
+            )}
+            {ctaVariant === "hero_banner" && (
+              <Button
+                onClick={() => { setIsModalOpen(true); trackCTA("cta_click", { location: "topbar_minimal" }); }}
+                variant="outline"
+                size="sm"
+                className="flex items-center gap-2"
+              >
+                <Plus className="size-3.5" />
+                New Scan
+              </Button>
+            )}
             <Button aria-label="Notifications" size="icon" variant="ghost">
               <Bell className="size-4" />
             </Button>
@@ -676,7 +706,34 @@ export function Dashboard() {
                   <CardContent>
                     <div className="grid gap-4 lg:grid-cols-[440px_repeat(4,1fr)]">
                       <div className="flex items-center gap-8">
-                        <Donut score={latestAnalysis?.risk.score || 0} />
+                        {/* Experiment: risk_display */}
+                        {riskVariant === "donut" ? (
+                          <Donut score={latestAnalysis?.risk.score || 0} />
+                        ) : (
+                          /* Variant B: Horizontal progress bar */
+                          <div className="flex w-40 flex-col gap-2">
+                            <div className="text-3xl font-bold tabular-nums">
+                              {latestAnalysis ? Math.round(latestAnalysis.risk.score) : 0}
+                              <span className="text-base font-normal text-muted-foreground">/100</span>
+                            </div>
+                            <div className="h-3 w-full overflow-hidden rounded-full bg-muted">
+                              <div
+                                className="h-full rounded-full transition-all duration-700"
+                                style={{
+                                  width: `${latestAnalysis?.risk.score || 0}%`,
+                                  background: `linear-gradient(90deg,
+                                    #16a34a 0%,
+                                    #d97706 40%,
+                                    #ea580c 70%,
+                                    #dc2626 100%)`,
+                                }}
+                              />
+                            </div>
+                            <div className="flex justify-between text-[10px] text-muted-foreground">
+                              <span>Low</span><span>Med</span><span>High</span><span>Crit</span>
+                            </div>
+                          </div>
+                        )}
                         <div className="flex flex-col gap-2.5">
                           <div className="flex items-center gap-3">
                             <span className="size-2.5 rounded-full bg-primary" />
@@ -934,10 +991,83 @@ export function Dashboard() {
                   </CardHeader>
                   <CardContent>
                     {analyses.length === 0 ? (
-                      <div className="py-8 text-center text-xs text-muted-foreground">
-                        No analysis jobs completed yet. Click <strong>Scan Repository</strong> to trigger your first analysis.
+                      ctaVariant === "hero_banner" ? (
+                        /* Experiment: onboarding_cta — hero banner variant */
+                        <div className="rounded-xl border border-dashed border-primary/30 bg-gradient-to-br from-emerald-500/5 via-indigo-500/5 to-violet-500/5 p-8 text-center">
+                          <div className="mx-auto mb-4 flex size-14 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-600 to-indigo-600 shadow-lg">
+                            <GitCompare className="size-7 text-white" />
+                          </div>
+                          <h3 className="text-lg font-semibold">Analyze Your First Repository</h3>
+                          <p className="mx-auto mt-2 max-w-xs text-sm text-muted-foreground">
+                            Connect a GitHub repo or local folder to get deterministic risk scores, dependency graphs, and AI-powered insights.
+                          </p>
+                          <Button
+                            onClick={() => { setIsModalOpen(true); trackCTA("cta_click", { location: "hero_banner" }); }}
+                            className="mt-5 bg-gradient-to-r from-emerald-600 to-indigo-600 hover:from-emerald-700 hover:to-indigo-700 text-white px-6"
+                          >
+                            <FolderCode className="size-4 mr-2" />
+                            Scan Repository or Local Folder
+                          </Button>
+                          <p className="mt-3 text-[11px] text-muted-foreground">Supports GitHub, local paths, and ZIP uploads</p>
+                        </div>
+                      ) : (
+                        <div className="py-8 text-center text-xs text-muted-foreground">
+                          No analysis jobs completed yet. Click <strong>Scan Repository</strong> to trigger your first analysis.
+                        </div>
+                      )
+                    ) : analysisVariant === "card_grid" ? (
+                      /* Experiment: analysis_display — card grid variant */
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        {analyses
+                          .filter((anl) => {
+                            if (!globalSearchQuery.trim()) return true;
+                            const q = globalSearchQuery.toLowerCase();
+                            return (
+                              anl.id.toLowerCase().includes(q) ||
+                              anl.trigger.toLowerCase().includes(q) ||
+                              anl.risk.level.toLowerCase().includes(q) ||
+                              anl.impacted_modules.some((m) => m.toLowerCase().includes(q)) ||
+                              anl.changed_files.some((f) => f.toLowerCase().includes(q))
+                            );
+                          })
+                          .slice(0, 6)
+                          .map((anl) => (
+                            <div
+                              key={anl.id}
+                              onClick={() => { trackAnalysis("card_click", { analysisId: anl.id }); }}
+                              className="rounded-xl border border-border bg-muted/20 p-3.5 space-y-2.5 hover:border-primary/40 hover:bg-primary/5 transition-all cursor-pointer"
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-mono text-[11px] font-semibold text-primary truncate max-w-[120px]">{anl.id}</span>
+                                <Badge variant={levelVariant(anl.risk.level)}>{anl.risk.level}</Badge>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+                                  <div
+                                    className="h-full rounded-full bg-gradient-to-r from-emerald-500 via-amber-500 to-red-500"
+                                    style={{ width: `${anl.risk.score}%` }}
+                                  />
+                                </div>
+                                <span className="text-xs font-bold tabular-nums">{Math.round(anl.risk.score)}/100</span>
+                              </div>
+                              <div className="text-[10px] text-muted-foreground truncate">
+                                {anl.impacted_modules.slice(0, 3).join(", ") || "Root"}
+                              </div>
+                              <div className="pt-1">
+                                {activeRepoId && (
+                                  <ExportButton
+                                    analysisId={anl.id}
+                                    repositoryId={activeRepoId}
+                                    repositoryName={repositories.find((r) => r.id === activeRepoId)?.name}
+                                    disabled={!anl.risk.score}
+                                  />
+                                )}
+                              </div>
+                            </div>
+                          ))}
                       </div>
                     ) : (
+                      /* Experiment: analysis_display — control table variant */
                       <div className="overflow-x-auto">
                         <Table>
                           <TableHeader>
