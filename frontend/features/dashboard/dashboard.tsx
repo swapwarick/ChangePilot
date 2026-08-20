@@ -109,6 +109,7 @@ function Donut({ score = 0 }: { score?: number }) {
 
 export function Dashboard() {
   const [activeTab, setActiveTab] = useState<string>("Dashboard");
+  const [globalSearchQuery, setGlobalSearchQuery] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [activeRepoId, setActiveRepoId] = useState<string | null>(null);
@@ -591,11 +592,27 @@ export function Dashboard() {
       {/* Main Content Area */}
       <section className="min-w-0">
         <header className="flex min-h-16 flex-col items-stretch justify-between gap-3 border-b border-border bg-surface/80 px-4 py-3 backdrop-blur sm:flex-row sm:items-center sm:px-5">
-          <div className="flex h-10 w-full items-center gap-2 rounded-md border border-border bg-background px-3 text-muted-foreground sm:max-w-[520px]">
-            <Search className="size-4" />
-            <span className="text-sm">Search modules, components, repositories, analyses...</span>
-            <kbd className="ml-auto rounded-sm border border-border px-1.5 py-0.5 text-xs">⌘ K</kbd>
-          </div>
+          <label className="flex h-10 w-full items-center gap-2 rounded-md border border-border bg-background px-3 text-muted-foreground focus-within:border-primary focus-within:ring-1 focus-within:ring-primary/30 transition-all sm:max-w-[520px]">
+            <Search className="size-4 shrink-0" />
+            <input
+              id="global-search"
+              type="search"
+              placeholder="Search analyses, modules, files..."
+              value={globalSearchQuery}
+              onChange={(e) => setGlobalSearchQuery(e.target.value)}
+              className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
+              aria-label="Search analyses and modules"
+            />
+            {globalSearchQuery && (
+              <button
+                onClick={() => setGlobalSearchQuery("")}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+                aria-label="Clear search"
+              >
+                <X className="size-3.5" />
+              </button>
+            )}
+          </label>
           <div className="flex items-center justify-end gap-2">
             <Button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 bg-gradient-to-r from-emerald-600 to-indigo-600 hover:from-emerald-700 hover:to-indigo-700 text-white shadow-xs">
               <FolderCode className="size-4" />
@@ -934,7 +951,20 @@ export function Dashboard() {
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {analyses.slice(0, 5).map((anl) => (
+                            {analyses
+                              .filter((anl) => {
+                                if (!globalSearchQuery.trim()) return true;
+                                const q = globalSearchQuery.toLowerCase();
+                                return (
+                                  anl.id.toLowerCase().includes(q) ||
+                                  anl.trigger.toLowerCase().includes(q) ||
+                                  anl.risk.level.toLowerCase().includes(q) ||
+                                  anl.impacted_modules.some((m) => m.toLowerCase().includes(q)) ||
+                                  anl.changed_files.some((f) => f.toLowerCase().includes(q))
+                                );
+                              })
+                              .slice(0, 5)
+                              .map((anl) => (
                               <TableRow key={anl.id}>
                                 <TableCell className="font-mono text-xs font-semibold text-primary">{anl.id}</TableCell>
                                 <TableCell className="text-xs">{anl.trigger}</TableCell>
@@ -1163,7 +1193,19 @@ export function Dashboard() {
                     {analyses.length === 0 ? (
                       <div className="py-8 text-center text-xs text-muted-foreground">No analysis runs recorded yet.</div>
                     ) : (
-                      analyses.map((anl) => (
+                      analyses
+                        .filter((anl) => {
+                          if (!globalSearchQuery.trim()) return true;
+                          const q = globalSearchQuery.toLowerCase();
+                          return (
+                            anl.id.toLowerCase().includes(q) ||
+                            anl.trigger.toLowerCase().includes(q) ||
+                            anl.risk.level.toLowerCase().includes(q) ||
+                            anl.impacted_modules.some((m) => m.toLowerCase().includes(q)) ||
+                            anl.changed_files.some((f) => f.toLowerCase().includes(q))
+                          );
+                        })
+                        .map((anl) => (
                         <div
                           key={anl.id}
                           onClick={() => setSelectedAnalysisId(anl.id)}
