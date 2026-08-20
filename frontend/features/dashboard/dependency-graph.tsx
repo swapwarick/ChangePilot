@@ -68,13 +68,21 @@ const EDGE_TYPE_CONFIG: Record<string, { color: string; label: string; descripti
   DEFINES_ROUTE:      { color: "#ea580c", label: "DEFINES ROUTE", description: "API Route definition" },
   USES:               { color: "#14b8a6", label: "USES",          description: "Usage relationship" },
   SELF_IMPORT:        { color: "#ef4444", label: "SELF IMPORT",   description: "Self-referencing import (ignored)" },
+  owns:               { color: "#3b82f6", label: "OWNS",          description: "Module structural ownership" },
+  OWNS:               { color: "#3b82f6", label: "OWNS",          description: "Module structural ownership" },
 };
 
 const DEFAULT_EDGE_COLOR = "#6366f1";
 
 function getEdgeConfig(edgeType?: string, relationship?: string) {
-  const key = edgeType || relationship || "IMPORTS";
-  return EDGE_TYPE_CONFIG[key] ?? { color: DEFAULT_EDGE_COLOR, label: key, description: key };
+  if (relationship && EDGE_TYPE_CONFIG[relationship]) return EDGE_TYPE_CONFIG[relationship];
+  if (edgeType && EDGE_TYPE_CONFIG[edgeType]) return EDGE_TYPE_CONFIG[edgeType];
+  const upperRel = relationship?.toUpperCase();
+  if (upperRel && EDGE_TYPE_CONFIG[upperRel]) return EDGE_TYPE_CONFIG[upperRel];
+  const upperType = edgeType?.toUpperCase();
+  if (upperType && EDGE_TYPE_CONFIG[upperType]) return EDGE_TYPE_CONFIG[upperType];
+  const fallback = relationship || edgeType || "IMPORTS";
+  return { color: DEFAULT_EDGE_COLOR, label: fallback.toUpperCase(), description: fallback };
 }
 
 // ---- Default visible edge types (ALL types enabled by default) ---
@@ -240,17 +248,30 @@ function CustomGraphNode({ data }: NodeProps) {
 
   return (
     <div className={`relative px-3.5 py-2.5 rounded-xl border w-[240px] cursor-pointer transition-all duration-200 ${getStyle()} ${opacityClass}`}>
+      {/* Target Handles (Incoming connections) */}
       <Handle
         type="target"
         position={Position.Left}
         id="target-left"
-        className="!w-2.5 !h-2.5 !bg-indigo-500 !border-2 !border-background hover:!scale-125 transition-transform"
+        className="!w-2 !h-2 !bg-indigo-500 !border !border-background hover:!scale-125 transition-transform"
       />
       <Handle
         type="target"
         position={Position.Top}
         id="target-top"
-        className="!w-2.5 !h-2.5 !bg-indigo-500 !border-2 !border-background hover:!scale-125 transition-transform"
+        className="!w-2 !h-2 !bg-indigo-500 !border !border-background hover:!scale-125 transition-transform"
+      />
+      <Handle
+        type="target"
+        position={Position.Right}
+        id="target-right"
+        className="!w-2 !h-2 !bg-indigo-500 !border !border-background hover:!scale-125 transition-transform"
+      />
+      <Handle
+        type="target"
+        position={Position.Bottom}
+        id="target-bottom"
+        className="!w-2 !h-2 !bg-indigo-500 !border !border-background hover:!scale-125 transition-transform"
       />
 
       <div className="flex items-center justify-between gap-2">
@@ -278,17 +299,30 @@ function CustomGraphNode({ data }: NodeProps) {
         </div>
       )}
 
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        id="source-bottom"
-        className="!w-2.5 !h-2.5 !bg-indigo-500 !border-2 !border-background hover:!scale-125 transition-transform"
-      />
+      {/* Source Handles (Outgoing connections) */}
       <Handle
         type="source"
         position={Position.Right}
         id="source-right"
-        className="!w-2.5 !h-2.5 !bg-indigo-500 !border-2 !border-background hover:!scale-125 transition-transform"
+        className="!w-2 !h-2 !bg-indigo-500 !border !border-background hover:!scale-125 transition-transform"
+      />
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        id="source-bottom"
+        className="!w-2 !h-2 !bg-indigo-500 !border !border-background hover:!scale-125 transition-transform"
+      />
+      <Handle
+        type="source"
+        position={Position.Left}
+        id="source-left"
+        className="!w-2 !h-2 !bg-indigo-500 !border !border-background hover:!scale-125 transition-transform"
+      />
+      <Handle
+        type="source"
+        position={Position.Top}
+        id="source-top"
+        className="!w-2 !h-2 !bg-indigo-500 !border !border-background hover:!scale-125 transition-transform"
       />
     </div>
   );
@@ -720,10 +754,15 @@ function DependencyGraphInner({ nodes = [], edges = [], graphHealth }: Dependenc
     const { idSet, labelMap } = nodeLookupMap;
     if (idSet.has(rawId)) return rawId;
     const stripped = rawId.replace(/^(call:|base:|file:|function:|class:|module:|package:|api:|folder:)/, "");
+    if (idSet.has(stripped)) return stripped;
     if (labelMap.has(stripped)) return labelMap.get(stripped)!;
     if (idSet.has(`function:${stripped}`)) return `function:${stripped}`;
     if (idSet.has(`file:${stripped}`)) return `file:${stripped}`;
     if (idSet.has(`class:${stripped}`)) return `class:${stripped}`;
+    if (idSet.has(`module:${stripped}`)) return `module:${stripped}`;
+    if (idSet.has(`folder:${stripped}`)) return `folder:${stripped}`;
+    if (idSet.has(`api:${stripped}`)) return `api:${stripped}`;
+    if (idSet.has(`package:${stripped}`)) return `package:${stripped}`;
     return null;
   }, [nodeLookupMap]);
 
@@ -731,14 +770,21 @@ function DependencyGraphInner({ nodes = [], edges = [], graphHealth }: Dependenc
   const allResolvedEdges = useMemo(() => {
     const seenTriplet = new Set<string>();
     const result: GraphEdge[] = [];
-    for (const e of edges) {
+    for (let i = 0; i < edges.length; i++) {
+      const e = edges[i];
       const srcId = resolveId(e.source);
       const tgtId = resolveId(e.target);
       if (!srcId || !tgtId || srcId === tgtId) continue;
-      const triplet = `${srcId}||${tgtId}||${e.edge_type ?? e.relationship}`;
+      const relKey = e.edge_type || e.relationship || "IMPORTS";
+      const triplet = `${srcId}||${tgtId}||${relKey}`;
       if (seenTriplet.has(triplet)) continue;
       seenTriplet.add(triplet);
-      result.push({ ...e, source: srcId, target: tgtId, id: `${srcId}->${tgtId}` });
+      result.push({
+        ...e,
+        source: srcId,
+        target: tgtId,
+        id: e.id || `edge-${srcId}-${tgtId}-${relKey}-${i}`,
+      });
     }
     return result;
   }, [edges, resolveId]);
@@ -793,10 +839,35 @@ function DependencyGraphInner({ nodes = [], edges = [], graphHealth }: Dependenc
 
   const uniqueNodes = useMemo(() => {
     const seen = new Set<string>();
-    return filteredNodes.filter((n) => {
+    const filtered = filteredNodes.filter((n) => {
       if (seen.has(n.id)) return false;
       seen.add(n.id);
       return true;
+    });
+
+    const kindWeight: Record<string, number> = {
+      module: 0,
+      folder: 1,
+      package: 2,
+      file: 3,
+      database: 4,
+      class: 5,
+      api: 6,
+      function: 7,
+    };
+
+    return filtered.sort((a, b) => {
+      const modA = a.module || a.path?.split("/")[0] || "";
+      const modB = b.module || b.path?.split("/")[0] || "";
+      if (modA !== modB) return modA.localeCompare(modB);
+
+      const pathA = a.path || a.label;
+      const pathB = b.path || b.label;
+      if (pathA !== pathB) return pathA.localeCompare(pathB);
+
+      const kwA = kindWeight[a.kind] ?? 99;
+      const kwB = kindWeight[b.kind] ?? 99;
+      return kwA - kwB;
     });
   }, [filteredNodes]);
 
@@ -804,8 +875,13 @@ function DependencyGraphInner({ nodes = [], edges = [], graphHealth }: Dependenc
   const visibleEdges = useMemo(() => {
     return allResolvedEdges.filter((e) => {
       if (!filteredNodeIds.has(e.source) || !filteredNodeIds.has(e.target)) return false;
-      const key = e.edge_type ?? e.relationship ?? "IMPORTS";
-      return activeEdgeTypes.has(key);
+      if (activeEdgeTypes.size === 0) return false;
+      const t = e.edge_type;
+      const r = e.relationship;
+      if (t && activeEdgeTypes.has(t)) return true;
+      if (r && activeEdgeTypes.has(r)) return true;
+      const fallback = t || r || "IMPORTS";
+      return activeEdgeTypes.has(fallback);
     });
   }, [allResolvedEdges, filteredNodeIds, activeEdgeTypes]);
 
@@ -863,38 +939,81 @@ function DependencyGraphInner({ nodes = [], edges = [], graphHealth }: Dependenc
     });
   }, [uniqueNodes, hoveredNodeId, selectedNode, connectedNodeIds, blastMap]);
 
-  // ---- ReactFlow edges with per-type coloring -----------------------------
+  // ---- Map node positions for smart handle assignment ---------------------
+  const nodePositionMap = useMemo(() => {
+    const map = new Map<string, { x: number; y: number }>();
+    flowNodes.forEach((n) => {
+      map.set(n.id, n.position);
+    });
+    return map;
+  }, [flowNodes]);
+
+  // ---- ReactFlow edges with per-type coloring & dynamic handle assignment -
   const flowEdges: Edge[] = useMemo(() => {
-    return visibleEdges.map((edge) => {
+    return visibleEdges.map((edge, idx) => {
       const activeId = hoveredNodeId || selectedNode?.id;
       const isConnected = activeId && (edge.source === activeId || edge.target === activeId);
       const isDimmed = activeId !== null && !isConnected;
       const cfg = getEdgeConfig(edge.edge_type, edge.relationship);
 
+      const srcPos = nodePositionMap.get(edge.source);
+      const tgtPos = nodePositionMap.get(edge.target);
+
+      let sourceHandle = "source-right";
+      let targetHandle = "target-left";
+
+      if (srcPos && tgtPos) {
+        const dx = tgtPos.x - srcPos.x;
+        const dy = tgtPos.y - srcPos.y;
+
+        if (Math.abs(dx) >= Math.abs(dy)) {
+          if (dx >= 0) {
+            sourceHandle = "source-right";
+            targetHandle = "target-left";
+          } else {
+            sourceHandle = "source-left";
+            targetHandle = "target-right";
+          }
+        } else {
+          if (dy >= 0) {
+            sourceHandle = "source-bottom";
+            targetHandle = "target-top";
+          } else {
+            sourceHandle = "source-top";
+            targetHandle = "target-bottom";
+          }
+        }
+      }
+
+      const edgeColor = isConnected ? "#4f46e5" : (cfg.color || "#6366f1");
+
       return {
-        id: edge.id,
+        id: edge.id || `e-${edge.source}-${edge.target}-${idx}`,
         source: edge.source,
         target: edge.target,
+        sourceHandle,
+        targetHandle,
         type: "smoothstep",
         label: cfg.label,
         labelStyle: { fill: "#64748b", fontSize: 9, fontWeight: 600 },
-        labelBgStyle: { fill: "#f8fafc", rx: 4, ry: 4 },
+        labelBgStyle: { fill: "#ffffff", rx: 4, ry: 4, fillOpacity: 0.9 },
+        labelBgPadding: [4, 2] as [number, number],
         animated: Boolean(isConnected),
         style: {
-          stroke: isConnected ? "#4f46e5" : (cfg.color || "#6366f1"),
-          strokeWidth: isConnected ? 3.5 : 2,
-          opacity: isDimmed ? 0.25 : 0.95,
+          stroke: edgeColor,
+          strokeWidth: isConnected ? 3 : 1.75,
+          opacity: isDimmed ? 0.2 : 0.85,
           strokeDasharray: cfg.dashArray ?? undefined,
         },
         markerEnd: {
           type: MarkerType.ArrowClosed,
-          color: isConnected ? "#4f46e5" : (cfg.color || "#6366f1"),
+          color: edgeColor,
           width: 14,
           height: 14,
         },
       };
     });
-  }, [visibleEdges, hoveredNodeId, selectedNode]);
+  }, [visibleEdges, hoveredNodeId, selectedNode, nodePositionMap]);
 
   useEffect(() => {
     if (uniqueNodes.length > 0) {
