@@ -66,7 +66,8 @@ import { ExportButton } from "@/features/analysis/export-button";
 import { UserMenu } from "@/components/user-menu";
 import { AIProviderConfig, ChangeAnalysisResult, PolicyComparisonResult, PolicyRuleConfig, RepoKnowledgeGraph, RiskBreakdownItem, RiskPolicy } from "@/types/api";
 import { getApiBaseUrl } from "@/lib/api-config";
-import { authHeader } from "@/lib/auth-client";
+import { authHeader, getUserGithubToken } from "@/lib/auth-client";
+import { useAuth } from "@/lib/auth-context";
 import { useABTest } from "@/lib/ab-testing";
 import {
   EXPERIMENT_HEADER_LAYOUT,
@@ -115,6 +116,7 @@ function Donut({ score = 0 }: { score?: number }) {
 }
 
 export function Dashboard() {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<string>("Dashboard");
   const [globalSearchQuery, setGlobalSearchQuery] = useState("");
 
@@ -264,7 +266,7 @@ export function Dashboard() {
           } catch (localErr) {}
         } else if (repoObj.source === "github" && repoObj.owner) {
           try {
-            const token = localStorage.getItem("github_token") || localStorage.getItem("changepilot_github_token") || "";
+            const token = user?.id ? getUserGithubToken(user.id) : null;
             if (token) {
               const headers: Record<string, string> = { Authorization: token };
               const prRes = await fetch(`${getApiBaseUrl()}/github/repositories/${repoObj.owner}/${repoObj.name}/pulls`, { headers });
@@ -336,7 +338,7 @@ export function Dashboard() {
     setSimulatingPr(true);
     setSimulateError(null);
     try {
-      const token = localStorage.getItem("github_token") || "";
+      const token = user?.id ? getUserGithubToken(user.id) : null;
       const repoUrl = repoObj.url || (repoObj.source === "local" ? repoObj.name : `https://github.com/${repoObj.owner || "local"}/${repoObj.name}`);
       const ownerName = repoObj.owner || (repoObj.source === "local" ? "local" : "github");
 

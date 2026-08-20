@@ -57,11 +57,47 @@ function storeTokens(tokens: AuthTokens): void {
 }
 
 function clearTokens(): void {
-  localStorage.removeItem(KEYS.access);
-  localStorage.removeItem(KEYS.refresh);
-  localStorage.removeItem(KEYS.user);
+  if (typeof window !== "undefined") {
+    localStorage.removeItem(KEYS.access);
+    localStorage.removeItem(KEYS.refresh);
+    localStorage.removeItem(KEYS.user);
+    localStorage.removeItem("changepilot_github_token");
+    localStorage.removeItem("github_token");
+    localStorage.removeItem("cp_recent_folders");
+    // Clear all user-scoped github tokens
+    Object.keys(localStorage).forEach((k) => {
+      if (k.startsWith("cp_gh_token_")) {
+        localStorage.removeItem(k);
+      }
+    });
+  }
   // Clear middleware cookie
   document.cookie = "cp_authed=; path=/; Max-Age=0";
+}
+
+export function getUserGithubToken(userId?: string): string | null {
+  if (typeof window === "undefined") return null;
+  const u = userId || getStoredUser()?.id;
+  if (!u) return null;
+  return localStorage.getItem(`cp_gh_token_${u}`);
+}
+
+export function setUserGithubToken(token: string, userId?: string): void {
+  if (typeof window === "undefined") return;
+  const u = userId || getStoredUser()?.id;
+  if (u) {
+    localStorage.setItem(`cp_gh_token_${u}`, token);
+  }
+}
+
+export function removeUserGithubToken(userId?: string): void {
+  if (typeof window === "undefined") return;
+  const u = userId || getStoredUser()?.id;
+  if (u) {
+    localStorage.removeItem(`cp_gh_token_${u}`);
+  }
+  localStorage.removeItem("changepilot_github_token");
+  localStorage.removeItem("github_token");
 }
 
 function storeUser(user: AuthUser): void {
@@ -99,6 +135,7 @@ export async function signUp(
   password: string,
   email?: string
 ): Promise<AuthUser> {
+  clearTokens();
   const res = await authFetch("/register", {
     method: "POST",
     body: JSON.stringify({ username, password, email: email || null }),
@@ -113,6 +150,7 @@ export async function signUp(
 }
 
 export async function signIn(usernameOrEmail: string, password: string): Promise<AuthUser> {
+  clearTokens();
   const res = await authFetch("/login", {
     method: "POST",
     body: JSON.stringify({ username: usernameOrEmail, password }),
@@ -127,6 +165,7 @@ export async function signIn(usernameOrEmail: string, password: string): Promise
 }
 
 export async function signInAsGuest(): Promise<AuthUser> {
+  clearTokens();
   const res = await authFetch("/guest", { method: "POST" });
   if (!res.ok) throw new Error("Failed to create guest session");
   const tokens: AuthTokens = await res.json();

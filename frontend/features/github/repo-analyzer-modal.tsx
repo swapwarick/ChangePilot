@@ -29,7 +29,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { GitRepositoryInfo, GitBranchInfo, GitCommitInfo } from "@/types/api";
 import { getApiBaseUrl } from "@/lib/api-config";
-import { authHeader } from "@/lib/auth-client";
+import { authHeader, getUserGithubToken, setUserGithubToken, removeUserGithubToken } from "@/lib/auth-client";
+import { useAuth } from "@/lib/auth-context";
 
 interface RepoAnalyzerModalProps {
   isOpen: boolean;
@@ -105,19 +106,27 @@ export function RepoAnalyzerModal({ isOpen, onClose, onJobStarted }: RepoAnalyze
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const { user } = useAuth();
+
   useEffect(() => {
-    const savedToken = localStorage.getItem("changepilot_github_token");
+    if (!isOpen) return;
+    const savedToken = user?.id ? getUserGithubToken(user.id) : null;
     if (savedToken) {
       setToken(savedToken);
       fetchGithubUser(savedToken);
       fetchRepositories(savedToken);
+    } else {
+      setToken("");
+      setGithubUser(null);
+      setRepositories([]);
+      setSelectedRepo(null);
     }
     // Auto-fetch local workspace on mount
     fetchCurrentWorkspace();
     // Load recent folders
     const saved = localStorage.getItem(RECENT_FOLDERS_KEY);
     if (saved) setRecentFolders(JSON.parse(saved));
-  }, []);
+  }, [isOpen, user?.id]);
 
   const saveRecentFolder = useCallback((path: string) => {
     setRecentFolders((prev) => {
@@ -247,11 +256,12 @@ export function RepoAnalyzerModal({ isOpen, onClose, onJobStarted }: RepoAnalyze
       if (res.ok) {
         const data = await res.json();
         setGithubUser(data);
-        localStorage.setItem("changepilot_github_token", t);
+        setUserGithubToken(t, user?.id);
       } else {
         const errData = await res.json().catch(() => ({ detail: null }));
         setError(errData.detail || "GitHub Auth failed. Please check your Personal Access Token.");
         setGithubUser(null);
+        removeUserGithubToken(user?.id);
       }
     } catch (err: any) {
       setError(`Auth Error: ${err.message}`);
@@ -725,7 +735,17 @@ export function RepoAnalyzerModal({ isOpen, onClose, onJobStarted }: RepoAnalyze
                       </div>
                     </div>
                   </div>
-                  <Button variant="outline" size="sm" onClick={() => { setGithubUser(null); localStorage.removeItem("changepilot_github_token"); }}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setGithubUser(null);
+                      setToken("");
+                      setRepositories([]);
+                      setSelectedRepo(null);
+                      removeUserGithubToken(user?.id);
+                    }}
+                  >
                     Disconnect
                   </Button>
                 </div>
