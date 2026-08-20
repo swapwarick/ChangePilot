@@ -4,7 +4,14 @@ import { AppProviders } from "./providers";
 
 export const metadata: Metadata = {
   title: "ChangePilot",
-  description: "AI-explained deterministic change impact analysis"
+  description: "AI-explained deterministic change impact analysis",
+  icons: {
+    icon: "/icon.jpg",
+    apple: "/icon.jpg",
+  },
+  openGraph: {
+    images: ["/icon.jpg"],
+  },
 };
 
 export default function RootLayout({
