@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { PlugZap, Plus, Search, Check, Sparkles } from "lucide-react";
+import { PlugZap, Plus, Search, Check, Sparkles, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -118,6 +118,21 @@ export function AIProviderSettings() {
         fetchProviders();
       }
     } catch (err) {}
+  };
+
+  const handleDeleteProvider = async (providerId: string, providerName: string) => {
+    if (!window.confirm(`Are you sure you want to delete AI provider "${providerName}"?`)) return;
+    try {
+      const res = await fetch(`${getApiBaseUrl()}/ai-providers/${providerId}`, {
+        method: "DELETE",
+        headers: authHeader(),
+      });
+      if (res.ok || res.status === 204) {
+        setProviders((prev) => prev.filter((p) => p.id !== providerId));
+      }
+    } catch (err) {
+      console.error("Delete provider error:", err);
+    }
   };
 
   const handleAddDefaultOllama = async () => {
@@ -339,7 +354,17 @@ export function AIProviderSettings() {
                             </p>
                           </div>
                         </div>
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDeleteProvider(provider.id, provider.name)}
+                            className="text-muted-foreground hover:text-red-500 hover:bg-red-500/10 p-1.5 h-8 w-8"
+                            title="Delete this AI provider"
+                            aria-label={`Delete ${provider.name}`}
+                          >
+                            <Trash2 className="size-4" />
+                          </Button>
                           <Switch
                             checked={provider.enabled}
                             onCheckedChange={(enabled) => toggleProvider(provider, enabled)}
