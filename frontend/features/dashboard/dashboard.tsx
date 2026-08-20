@@ -552,6 +552,49 @@ export function Dashboard() {
     }
   };
 
+  const handleDeleteActiveRepo = async () => {
+    if (!activeRepoId) return;
+    const repoObj = repositories.find((r) => r.id === activeRepoId);
+    const repoName = repoObj?.name || activeRepoId;
+    if (!window.confirm(`Are you sure you want to delete repository "${repoName}"?\n\nAll saved analyses and knowledge graph data for this repository will be permanently deleted.`)) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`${getApiBaseUrl()}/repositories/${activeRepoId}`, {
+        method: "DELETE",
+        headers: authHeader(),
+      });
+      if (res.ok || res.status === 204) {
+        const remaining = repositories.filter((r) => r.id !== activeRepoId);
+        setRepositories(remaining);
+        setActiveRepoId(remaining.length > 0 ? remaining[0].id : null);
+        setAnalyses([]);
+        setKnowledgeGraph(null);
+      } else {
+        alert("Failed to delete repository.");
+      }
+    } catch (err) {
+      console.error("Delete repository error:", err);
+    }
+  };
+
+  const handleDeleteAnalysis = async (analysisId: string) => {
+    if (!window.confirm("Are you sure you want to delete this analysis run?")) return;
+    try {
+      const res = await fetch(`${getApiBaseUrl()}/analysis/${analysisId}`, {
+        method: "DELETE",
+        headers: authHeader(),
+      });
+      if (res.ok || res.status === 204) {
+        setAnalyses((prev) => prev.filter((a) => a.id !== analysisId));
+        if (selectedAnalysisId === analysisId) setSelectedAnalysisId(null);
+      }
+    } catch (err) {
+      console.error("Delete analysis error:", err);
+    }
+  };
+
   return (
     <main className="flex min-h-screen flex-col text-sm lg:grid lg:grid-cols-[210px_1fr]">
       {/* Sidebar Navigation */}
@@ -583,7 +626,19 @@ export function Dashboard() {
         </nav>
 
         <div className="border-t border-border p-4">
-          <div className="text-xs uppercase text-muted-foreground">Active Repository</div>
+          <div className="flex items-center justify-between">
+            <div className="text-xs uppercase text-muted-foreground">Active Repository</div>
+            {activeRepoId && (
+              <button
+                onClick={handleDeleteActiveRepo}
+                title="Delete this repository & its saved analyses"
+                className="text-muted-foreground hover:text-red-500 transition-colors p-1 rounded hover:bg-muted"
+                aria-label="Delete active repository"
+              >
+                <Trash2 className="size-3.5" />
+              </button>
+            )}
+          </div>
           <select
             value={activeRepoId || ""}
             onChange={(e) => setActiveRepoId(e.target.value)}
@@ -1376,6 +1431,18 @@ export function Dashboard() {
                             repositoryName={repositories.find((r) => r.id === activeRepoId)?.name}
                             disabled={!latestAnalysis.risk.score}
                           />
+                        )}
+                        {latestAnalysis && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleDeleteAnalysis(latestAnalysis.id)}
+                            className="text-red-500 hover:text-red-600 hover:bg-red-500/10 border-red-500/30 text-xs"
+                            title="Delete this analysis run"
+                          >
+                            <Trash2 className="size-3.5 mr-1" />
+                            Delete
+                          </Button>
                         )}
                       </div>
                     </div>
@@ -2293,8 +2360,106 @@ export function Dashboard() {
 
           {/* TAB 8: SETTINGS */}
           {activeTab === "Settings" && (
-            <div className="space-y-4">
+            <div className="space-y-6">
               <AIProviderSettings />
+
+              {/* Data Management & Privacy Control */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <ShieldCheck className="size-4 text-primary" />
+                        Connected Repositories & Data Privacy
+                      </CardTitle>
+                      <CardDescription>
+                        Manage your connected repositories and control stored analysis data.
+                      </CardDescription>
+                    </div>
+                    <Badge variant="outline" className="border-emerald-500/40 text-emerald-600 bg-emerald-500/10 text-xs">
+                      🔒 Isolated User Scope
+                    </Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="rounded-lg border bg-muted/20 p-3 text-xs text-muted-foreground space-y-1.5">
+                    <div className="font-semibold text-foreground">Data Privacy & Security Guarantee:</div>
+                    <ul className="list-disc list-inside space-y-1">
+                      <li>All repository diffs, AST knowledge graphs, and risk analyses are strictly isolated to your user account.</li>
+                      <li>Other users and system administrators cannot view your repository files or analysis results.</li>
+                      <li>GitHub access tokens remain stored in your browser session and are never persisted in plain text on the server.</li>
+                    </ul>
+                  </div>
+
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-semibold uppercase text-muted-foreground">
+                      Your Connected Repositories ({repositories.length})
+                    </h4>
+                    {repositories.length === 0 ? (
+                      <div className="py-6 text-center text-xs text-muted-foreground border rounded-lg">
+                        No repositories connected to your account.
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {repositories.map((repo) => (
+                          <div
+                            key={repo.id}
+                            className="flex items-center justify-between p-3 rounded-lg border bg-background hover:bg-muted/30 transition-colors"
+                          >
+                            <div className="min-w-0">
+                              <div className="font-semibold text-sm truncate">{repo.name}</div>
+                              <div className="font-mono text-xs text-muted-foreground truncate">
+                                {repo.url || (repo.source === "local" ? "Local folder scan" : `GitHub: ${repo.owner}/${repo.name}`)}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  setActiveRepoId(repo.id);
+                                  setActiveTab("Dashboard");
+                                }}
+                                className="text-xs"
+                              >
+                                View
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={async () => {
+                                  if (!window.confirm(`Permanently delete repository "${repo.name}" and all its saved analysis history?`)) return;
+                                  try {
+                                    const res = await fetch(`${getApiBaseUrl()}/repositories/${repo.id}`, {
+                                      method: "DELETE",
+                                      headers: authHeader(),
+                                    });
+                                    if (res.ok || res.status === 204) {
+                                      const remaining = repositories.filter((r) => r.id !== repo.id);
+                                      setRepositories(remaining);
+                                      if (activeRepoId === repo.id) {
+                                        setActiveRepoId(remaining.length > 0 ? remaining[0].id : null);
+                                        setAnalyses([]);
+                                        setKnowledgeGraph(null);
+                                      }
+                                    }
+                                  } catch (err) {
+                                    console.error("Delete repository error:", err);
+                                  }
+                                }}
+                                className="text-red-500 hover:text-red-600 hover:bg-red-500/10 border-red-500/30 text-xs"
+                              >
+                                <Trash2 className="size-3.5 mr-1" />
+                                Delete
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
             </div>
           )}
         </div>

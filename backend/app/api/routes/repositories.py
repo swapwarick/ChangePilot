@@ -25,5 +25,8 @@ async def create_repository(
 
 
 @router.delete("/{repository_id}", status_code=204)
-async def delete_repository(repository_id: str, db: DbSession) -> None:
-    await RepositoryRepository(db).delete(repository_id)
+async def delete_repository(
+    repository_id: str, db: DbSession, current_user: OptionalUser = None
+) -> None:
+    user_id = current_user.id if current_user else None
+    await RepositoryRepository(db).delete(repository_id, user_id=user_id)

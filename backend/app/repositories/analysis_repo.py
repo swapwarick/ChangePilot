@@ -85,6 +85,18 @@ class AnalysisRepository:
         result = await self._session.execute(stmt)
         return [self._to_schema(row) for row in result.scalars()]
 
+    async def delete(self, analysis_id: str, *, user_id: str | None = None) -> bool:
+        stmt = select(AnalysisRow).where(AnalysisRow.id == analysis_id)
+        if user_id is not None:
+            stmt = stmt.where(AnalysisRow.user_id == user_id)
+        res = await self._session.execute(stmt)
+        row = res.scalar_one_or_none()
+        if not row:
+            return False
+        await self._session.delete(row)
+        await self._session.commit()
+        return True
+
     @staticmethod
     def _to_schema(row: AnalysisRow) -> ChangeAnalysisResult:
         full_result_raw = _safe_json_decode(row.risk_full_result)

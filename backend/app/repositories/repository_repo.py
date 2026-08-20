@@ -53,11 +53,25 @@ class RepositoryRepository:
         await self._session.refresh(row)
         return self._to_schema(row)
 
-    async def delete(self, repository_id: str) -> None:
-        row = await self._session.get(RepositoryRow, repository_id)
-        if row:
-            await self._session.delete(row)
-            await self._session.commit()
+    async def delete(self, repository_id: str, *, user_id: str | None = None) -> bool:
+        stmt = select(RepositoryRow).where(RepositoryRow.id == repository_id)
+        if user_id is not None:
+            stmt = stmt.where(RepositoryRow.user_id == user_id)
+        res = await self._session.execute(stmt)
+        row = res.scalar_one_or_none()
+        if not row:
+            return False
+
+        from sqlalchemy import delete as sql_delete
+        from app.database.tables import AnalysisJobRow, AnalysisRow, RepoKnowledgeGraphRow
+
+        # Cascade delete associated records
+        await self._session.execute(sql_delete(AnalysisRow).where(AnalysisRow.repository_id == repository_id))
+        await self._session.execute(sql_delete(AnalysisJobRow).where(AnalysisJobRow.repository_id == repository_id))
+        await self._session.execute(sql_delete(RepoKnowledgeGraphRow).where(RepoKnowledgeGraphRow.repository_id == repository_id))
+        await self._session.delete(row)
+        await self._session.commit()
+        return True
 
     @staticmethod
     def _to_schema(row: RepositoryRow) -> RepositorySummary:
