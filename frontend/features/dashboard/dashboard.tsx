@@ -99,12 +99,12 @@ function Donut({ score = 0 }: { score?: number }) {
   const degrees = Math.round(normScore * 360);
   return (
     <div
-      className="grid size-32 place-items-center rounded-full"
+      className="grid size-32 shrink-0 aspect-square place-items-center rounded-full"
       style={{
         background: `conic-gradient(hsl(var(--destructive)) 0 ${degrees * 0.28}deg, #f97316 ${degrees * 0.28}deg ${degrees * 0.65}deg, hsl(var(--warning)) ${degrees * 0.65}deg ${degrees}deg, hsl(var(--muted)) ${degrees}deg 360deg)`
       }}
     >
-      <div className="grid size-24 place-items-center rounded-full bg-surface text-center">
+      <div className="grid size-24 shrink-0 aspect-square place-items-center rounded-full bg-surface text-center">
         <div>
           <div className="text-2xl font-semibold">{displayVal}/100</div>
           <div className="text-[11px] text-muted-foreground">Risk score</div>
