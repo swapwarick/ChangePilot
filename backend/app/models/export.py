@@ -288,7 +288,7 @@ class AnalysisExportModel(BaseModel):
         # If indirect impact is 0, no inference or rule should claim downstream regression risk
         if self.blast_radius.indirect_impact == 0:
             for inf in self.inferences:
-                if "downstream component dependencies are impacted" in inf.claim.lower():
+                if "downstream component" in inf.claim.lower() or "downstream regression risk" in inf.claim.lower():
                     errors.append(f"Inference '{inf.id}' claims downstream dependency impact when indirect impact is 0.")
             for b in self.risk.breakdown:
                 if b.rule == "large_blast_radius" and b.points > 0:
@@ -633,7 +633,7 @@ class AnalysisExportModel(BaseModel):
         inf_idx = 1
         if risk.inferences:
             for inf in risk.inferences:
-                if indirect_impact == 0 and "downstream component dependencies are impacted" in inf.claim.lower():
+                if indirect_impact == 0 and ("downstream component" in inf.claim.lower() or "downstream regression risk" in inf.claim.lower()):
                     continue
                 inferences.append(
                     ExportEvidenceStatement(
@@ -664,7 +664,7 @@ class AnalysisExportModel(BaseModel):
                     ExportEvidenceStatement(
                         id=f"INF-{inf_idx:03d}",
                         statement_type="INFERENCE",
-                        claim=f"Downstream regression risk: {indirect_impact} downstream component dependencies are reachable from modified files.",
+                        claim=f"Downstream regression risk: {indirect_impact} unique downstream component(s) are reachable across {dep_edges} dependency edge(s).",
                         source_evidence="Derived from dependency graph traversal",
                         traceability_ref="rule:large_blast_radius",
                     )

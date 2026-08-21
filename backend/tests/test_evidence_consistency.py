@@ -176,33 +176,41 @@ def test_unresolved_imports_reduce_graph_quality():
 # ---------------------------------------------------------------------------
 
 def test_nextjs_middleware_not_orphan():
-    """Verify Next.js middleware is classified as FRAMEWORK_ENTRYPOINT and not orphan."""
+    """Verify Next.js middleware and conventions are classified as FRAMEWORK_ENTRYPOINT/ROUTE and not orphans."""
     assert classify_file("frontend/middleware.ts") == FileClassification.FRAMEWORK_ENTRYPOINT
     assert classify_file("frontend/middleware.js") == FileClassification.FRAMEWORK_ENTRYPOINT
     assert classify_file("frontend/app/page.tsx") == FileClassification.ROUTE
     assert classify_file("frontend/app/layout.tsx") == FileClassification.ROUTE
+    assert classify_file("frontend/app/loading.tsx") == FileClassification.ROUTE
+    assert classify_file("frontend/app/error.tsx") == FileClassification.ROUTE
+    assert classify_file("frontend/app/not-found.tsx") == FileClassification.ROUTE
+    assert classify_file("frontend/app/instrumentation.ts") == FileClassification.FRAMEWORK_ENTRYPOINT
     assert classify_file("frontend/app/api/auth/route.ts") == FileClassification.ROUTE
 
 
 # ---------------------------------------------------------------------------
-# 5. Alembic env.py Classification
+# 5. Alembic env.py & Migration Classification
 # ---------------------------------------------------------------------------
 
-def test_alembic_env_not_orphan():
-    """Verify backend/alembic/env.py is classified as CONFIGURATION and not orphan."""
+def test_alembic_env_and_migrations_not_orphan():
+    """Verify backend/alembic/env.py and version scripts are classified as CONFIGURATION and not orphans."""
     assert classify_file("backend/alembic/env.py") == FileClassification.CONFIGURATION
     assert classify_file("alembic/env.py") == FileClassification.CONFIGURATION
+    assert classify_file("backend/alembic/versions/001_initial_schema.py") == FileClassification.CONFIGURATION
+    assert classify_file("alembic/versions/002_real_analysis_schema.py") == FileClassification.CONFIGURATION
 
 
 # ---------------------------------------------------------------------------
-# 6. Worker Entrypoints Classification
+# 6. Worker Entrypoints & Package Inits Classification
 # ---------------------------------------------------------------------------
 
-def test_worker_entrypoints_not_orphan():
-    """Verify tasks.py and analysis_worker.py are classified as FRAMEWORK_ENTRYPOINT and not orphans."""
+def test_worker_entrypoints_and_package_inits_not_orphan():
+    """Verify tasks.py, analysis_worker.py, and __init__.py are not classified as source module orphans."""
     assert classify_file("backend/app/workers/tasks.py") == FileClassification.FRAMEWORK_ENTRYPOINT
     assert classify_file("backend/app/workers/analysis_worker.py") == FileClassification.FRAMEWORK_ENTRYPOINT
     assert classify_file("app/workers/worker.py") == FileClassification.FRAMEWORK_ENTRYPOINT
+    assert classify_file("backend/app/__init__.py") == FileClassification.CONFIGURATION
+    assert classify_file("backend/app/database/session.py") == FileClassification.CONFIGURATION
 
 
 # ---------------------------------------------------------------------------

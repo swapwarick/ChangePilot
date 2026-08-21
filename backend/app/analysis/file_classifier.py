@@ -283,7 +283,13 @@ def classify_file(
         filename_lower in CONFIG_FILENAMES
         or filename_lower in BUILD_FILENAMES
         or (suffix in (".json", ".toml", ".yaml", ".yml", ".xml", ".properties", ".ini", ".cfg", ".conf", ".gradle") and suffix not in SOURCE_EXTENSIONS)
+        or (any(p in ("alembic", "migrations") for p in parts_lower) and suffix in (".py", ".sql"))
+        or filename_lower in ("env.py", "alembic.ini")
     ):
+        return FileClassification.CONFIGURATION
+
+    # Package / Module Initializers (__init__.py)
+    if filename_lower == "__init__.py":
         return FileClassification.CONFIGURATION
 
     # 7. FRAMEWORK ENTRYPOINTS, ROUTES & STANDARD ENTRYPOINTS
@@ -294,7 +300,7 @@ def classify_file(
 
     # Package.json bin / main / exports entrypoints
     if package_json_entrypoints:
-        if norm in package_json_entrypoints or filename in package_json_entrypoints:
+        if norm in package_json_entrypoints or filename in package_json_entrypoints or filename_lower in package_json_entrypoints:
             return FileClassification.ENTRYPOINT
 
     # Android Component naming conventions
@@ -309,13 +315,22 @@ def classify_file(
             return FileClassification.ENTRYPOINT
 
     # Web framework routes (Next.js / Nuxt / Remix)
-    if filename_lower in ("page.tsx", "page.jsx", "page.ts", "page.js", "layout.tsx", "layout.jsx", "route.ts", "route.js", "loading.tsx", "error.tsx", "not-found.tsx", "global-error.tsx", "template.tsx", "default.tsx"):
+    if filename_lower in (
+        "page.tsx", "page.jsx", "page.ts", "page.js",
+        "layout.tsx", "layout.jsx", "layout.ts", "layout.js",
+        "route.ts", "route.js", "route.tsx", "route.jsx",
+        "loading.tsx", "loading.jsx", "loading.ts", "loading.js",
+        "error.tsx", "error.jsx", "error.ts", "error.js",
+        "not-found.tsx", "not-found.jsx", "not-found.ts", "not-found.js",
+        "global-error.tsx", "global-error.jsx",
+        "template.tsx", "template.jsx", "default.tsx", "default.jsx"
+    ):
         return FileClassification.ROUTE
 
     if any(p in ("pages", "routes", "controllers", "api", "endpoints") for p in parts_lower):
         return FileClassification.ROUTE
 
-    # Framework & Runtime Entrypoints (Next.js middleware, Alembic env, workers, tasks, database session)
+    # Framework & Runtime Entrypoints (Next.js middleware, Alembic env, workers, tasks, database session, ASGI/WSGI)
     if filename_lower in FRAMEWORK_ENTRYPOINT_FILENAMES:
         if filename_lower == "env.py" and any("alembic" in p for p in parts_lower):
             return FileClassification.CONFIGURATION

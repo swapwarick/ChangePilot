@@ -73,7 +73,7 @@ class DeterministicRiskEngine:
                     score=dep_score,
                     recommendation=ff_rec,
                     recommendation_type=rec_type,
-                    threshold="> 10 unique components",
+                    threshold=">= 10 unique components" if unique_downstream >= 10 else "> 10 unique components",
                     rule="large_blast_radius",
                     evidence_type="graph_metric",
                     evidence_value=f"{unique_downstream}_components",
@@ -123,12 +123,27 @@ class DeterministicRiskEngine:
             )
 
         if risk_input.critical_modules:
+            crit_details = []
+            for cm in risk_input.critical_modules:
+                reasons = []
+                cm_lower = cm.lower().replace("\\", "/")
+                if any(k in cm_lower for k in ("auth", "login", "jwt", "session", "credential")):
+                    reasons.append("authentication/security domain")
+                if any(k in cm_lower for k in ("payment", "billing", "checkout", "order")):
+                    reasons.append("payment/billing domain")
+                if any(k in cm_lower for k in ("db", "database", "schema", "alembic", "model")):
+                    reasons.append("database persistence model")
+                if "client" in cm_lower or "sdk" in cm_lower or "api" in cm_lower or "lib" in cm_lower:
+                    reasons.append("shared client interface")
+                reason_str = ", ".join(reasons) if reasons else "critical domain component"
+                crit_details.append(f"{cm} ({reason_str})")
+
             evidence.append(
                 RiskEvidence(
                     signal="critical_component_modified",
                     name="Critical Business Component Modified",
                     category="architecture",
-                    description=f"Critical business components are directly changed or impacted: {', '.join(risk_input.critical_modules[:3])}",
+                    description=f"Critical business components are directly changed or impacted: {', '.join(crit_details[:3])}",
                     weight=0.20,
                     score=min(len(risk_input.critical_modules) / 3.0, 1.0),
                     file_paths=risk_input.critical_modules,
@@ -545,7 +560,7 @@ class DeterministicRiskEngine:
                 review_areas.append({
                     "review_area": path,
                     "suggested_reviewer": None,
-                    "ownership_note": "Ownership data unavailable — CODEOWNERS/team mapping could not be determined from available repository evidence.",
+                    "ownership_note": "Ownership data unavailable — CODEOWNERS/team mapping not detected (could not be determined from available repository evidence).",
                 })
         return review_areas
 
